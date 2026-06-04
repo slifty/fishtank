@@ -1301,10 +1301,11 @@ function feedAt(x, y) {
 }
 
 /* =========================================================================
-   HOVER SPOTLIGHT — point at a fish to see its friends and relatives
+   INFO MODE — tap a fish to spotlight its friends, relatives, and age.
+   Tapping it again (or tapping the water) turns info mode back off.
    ========================================================================= */
 let pointer = { x: 0, y: 0, active: false };
-let hovered = null;
+let selected = null;   // the fish info mode is focused on, or null when off
 
 // every fish in `fish`'s blood line: itself + all ancestors (parents,
 // grandparents, …). Two fish are relatives when these sets overlap.
@@ -1321,26 +1322,41 @@ function bloodline(fish) {
   return seen;
 }
 
-// pick the fish under the cursor (nearest one whose body covers the point)
-function fishUnderPointer() {
-  if (!pointer.active) return null;
+// pick the nearest fish whose body covers the given point (null if none)
+function fishAt(x, y) {
   let best = null, bd = Infinity;
   for (const f of fishes) {
     if (f.inside) continue;
-    const d = dist(pointer.x, pointer.y, f.x, f.y);
+    const d = dist(x, y, f.x, f.y);
     if (d < f.len * 0.7 && d < bd) { bd = d; best = f; }
   }
   return best;
 }
 
-function drawHoverHighlights() {
-  if (!hovered || hovered.inside || !fishes.includes(hovered)) return;
+// the fish under the moving cursor — used only for a clickable-looking cursor
+function fishUnderPointer() {
+  if (!pointer.active) return null;
+  return fishAt(pointer.x, pointer.y);
+}
 
-  const friendIds = hovered.friends;
-  const myBlood = bloodline(hovered);
+// turn a fish's age (seconds of tank time) into a friendly label
+function formatAge(sec) {
+  sec = Math.floor(sec);
+  if (sec < 60) return sec + "s";
+  const m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return m + "m " + s + "s";
+  const h = Math.floor(m / 60);
+  return h + "h " + (m % 60) + "m";
+}
+
+function drawHoverHighlights() {
+  if (!selected || selected.inside || !fishes.includes(selected)) return;
+
+  const friendIds = selected.friends;
+  const myBlood = bloodline(selected);
   const relativeIds = new Set();
   for (const f of fishes) {
-    if (f === hovered) continue;
+    if (f === selected) continue;
     const theirs = bloodline(f);
     for (const id of theirs) { if (myBlood.has(id)) { relativeIds.add(f.id); break; } }
   }
@@ -1352,10 +1368,10 @@ function drawHoverHighlights() {
   const FRIEND = "hsl(140,80%,55%)";
   const FAMILY = "hsl(45,95%,60%)";
 
-  // connecting lines from the hovered fish to each highlighted fish
+  // connecting lines from the selected fish to each highlighted fish
   ctx.lineWidth = 2;
   for (const f of fishes) {
-    if (f === hovered) continue;
+    if (f === selected) continue;
     const isFriend = friendIds.has(f.id);
     const isRel = relativeIds.has(f.id);
     if (!isFriend && !isRel) continue;
@@ -1363,14 +1379,14 @@ function drawHoverHighlights() {
     ctx.globalAlpha = 0.5;
     ctx.setLineDash(isRel ? [6, 5] : []);
     ctx.beginPath();
-    ctx.moveTo(hovered.x, hovered.y);
+    ctx.moveTo(selected.x, selected.y);
     ctx.lineTo(f.x, f.y);
     ctx.stroke();
   }
   ctx.setLineDash([]);
   ctx.globalAlpha = 1;
 
-  // redraw the hovered fish and its people at full brightness, with rings
+  // redraw the selected fish and its people at full brightness, with rings
   const ring = (f, color, r) => {
     ctx.strokeStyle = color;
     ctx.lineWidth = 3;
@@ -1381,22 +1397,23 @@ function drawHoverHighlights() {
   for (const f of fishes) {
     const isFriend = friendIds.has(f.id);
     const isRel = relativeIds.has(f.id);
-    if (f !== hovered && !isFriend && !isRel) continue;
+    if (f !== selected && !isFriend && !isRel) continue;
     f.draw();
     const base = f.len * 0.75 + 6;
-    if (f === hovered) ring(f, "#ffffff", base);
+    if (f === selected) ring(f, "#ffffff", base);
     else {
       if (isRel) ring(f, FAMILY, base);
       if (isFriend) ring(f, FRIEND, base + (isRel ? 6 : 0));
     }
   }
 
-  // a little floating legend above the hovered fish
+  // a little floating legend above the selected fish: its age, then the key
   ctx.font = "16px -apple-system, sans-serif";
   ctx.textAlign = "center";
   ctx.fillStyle = "#fff";
-  const ly = hovered.y - hovered.len * 0.75 - 16;
-  ctx.fillText("💚 friends   💛 family", hovered.x, ly);
+  const ly = selected.y - selected.len * 0.75 - 16;
+  ctx.fillText("💚 friends   💛 family", selected.x, ly);
+  ctx.fillText("🎂 age " + formatAge(selected.age), selected.x, ly - 20);
   ctx.textAlign = "left";
 }
 
@@ -1451,8 +1468,7 @@ function frame(now) {
   fishes.forEach(f => f.draw());
   crabs.forEach(c => c.draw());
   drawDecorFront();
-  hovered = fishUnderPointer();
-  canvas.style.cursor = hovered ? "default" : "pointer";
+  canvas.style.cursor = fishUnderPointer() ? "pointer" : "default";
   drawHoverHighlights();
   hearts.forEach(h => h.draw());
 
@@ -1471,7 +1487,14 @@ function tankXY(e) {
 }
 canvas.addEventListener("pointerdown", (e) => {
   const { x, y } = tankXY(e);
-  feedAt(x, y);   // tapping the water drops food where you tapped
+  const f = fishAt(x, y);
+  if (f) {
+    // tapping a fish toggles info mode on it — no food dropped
+    selected = (selected === f) ? null : f;
+    return;
+  }
+  selected = null;   // tapping the water turns info mode off...
+  feedAt(x, y);      // ...and drops food where you tapped
 });
 
 document.getElementById("bFood").addEventListener("click", () => feedAt(rand(W * 0.3, W * 0.7), 40));
