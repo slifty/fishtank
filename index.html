@@ -82,7 +82,7 @@
   <button class="btn" id="bFish" title="Add a fish">🐟</button>
   <button class="btn" id="bCrab" title="Add a crab">🦀</button>
   <button class="btn" id="bHorse" title="Add a seahorse">🐴</button>
-  <button class="btn" id="bSound" title="Sound on/off">🔊</button>
+  <button class="btn" id="bSound" title="Sound on/off">🔇</button>
 </div>
 <div id="hint"><span class="swim">🐠</span> tap the water to feed the fish</div>
 
@@ -125,7 +125,7 @@ const TAU = Math.PI * 2;
    ========================================================================= */
 const Sound = (() => {
   let ctxA = null;
-  let on = true;
+  let on = false;
   let bubbleTimer = 0;
 
   function ensure() {
