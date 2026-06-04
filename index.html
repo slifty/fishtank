@@ -82,6 +82,7 @@
   <button class="btn" id="bFish" title="Add a fish">🐟</button>
   <button class="btn" id="bCrab" title="Add a crab">🦀</button>
   <button class="btn" id="bHorse" title="Add a seahorse">🐴</button>
+  <button class="btn" id="bPlant" title="Plant seaweed">🌱</button>
   <button class="btn" id="bSound" title="Sound on/off">🔇</button>
 </div>
 <div id="hint"><span class="swim">🐠</span> tap the water to feed the fish</div>
@@ -252,6 +253,15 @@ function breed(a, b) {
 }
 
 const hsl = (h, s, l, a = 1) => `hsla(${h},${s}%,${l}%,${a})`;
+
+// blend two "#rrggbb" colours; t=0 → c1, t=1 → c2 (used for the day/night sky)
+function mixHex(c1, c2, t) {
+  const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+  const r = Math.round(((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t);
+  const g = Math.round(((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * t);
+  const bl = Math.round((a & 255) + ((b & 255) - (a & 255)) * t);
+  return `rgb(${r},${g},${bl})`;
+}
 
 /* =========================================================================
    ENTITY COLLECTIONS
@@ -888,14 +898,19 @@ function spawnHearts(x, y, n, _spread) {
    DECORATIONS — plants, rocks, castle, treasure chest (a surprise!)
    ========================================================================= */
 class Plant {
-  constructor(x) {
+  constructor(x, fromSeed = false) {
     this.x = x;
     this.hue = rand(90, 160);
     this.blades = randInt(3, 6);
-    this.h = rand(60, 150);
+    this.maxH = rand(60, 150);
+    this.h = fromSeed ? 8 : this.maxH;   // planted seedlings sprout, then grow tall
+    this.growRate = this.maxH / 22;      // reaches full height in ~22s
     this.t = rand(0, TAU);
   }
-  update(dt) { this.t += dt * 1.5; }
+  update(dt) {
+    this.t += dt * 1.5;
+    if (this.h < this.maxH) this.h = Math.min(this.maxH, this.h + this.growRate * dt);
+  }
   draw() {
     const baseY = FLOOR();
     for (let i = 0; i < this.blades; i++) {
@@ -1238,22 +1253,60 @@ function triggerSurprise() {
    BACKGROUND — gradient water + caustic light + sandy floor
    ========================================================================= */
 let causticT = 0;
+let tankClock = 0;        // seconds since load — drives the day/night cycle
+let daylight = 1;         // 1 = bright day, 0 = deep night
+const DAY_PERIOD = 160;   // seconds for one full day → night → day loop
+let stars = [], starsW = 0, starsH = 0;
+
+// a field of little stars for the night sky, scaled to the tank size
+function makeStars() {
+  stars = []; starsW = W; starsH = H;
+  const n = Math.round(W / 18);
+  for (let i = 0; i < n; i++)
+    stars.push({ x: rand(0, W), y: rand(8, H * 0.55), r: rand(0.6, 1.8), p: rand(0, TAU) });
+}
+
 function drawBackground(dt) {
   causticT += dt * 0.3;
+  tankClock += dt;
+  // smooth cycle that starts at full day, eases to night, and back again
+  daylight = 0.5 + 0.5 * Math.cos((tankClock * TAU) / DAY_PERIOD);
+  if (stars.length === 0 || starsW !== W || starsH !== H) makeStars();
+
+  // water colour blends between a bright day blue and a deep night blue
   const water = ctx.createLinearGradient(0, 0, 0, H);
-  water.addColorStop(0, "#0a6ea0");
-  water.addColorStop(0.5, "#0a4f7a");
-  water.addColorStop(1, "#06304d");
+  water.addColorStop(0,   mixHex("#041020", "#0a6ea0", daylight));
+  water.addColorStop(0.5, mixHex("#04162a", "#0a4f7a", daylight));
+  water.addColorStop(1,   mixHex("#020c18", "#06304d", daylight));
   ctx.fillStyle = water;
   ctx.fillRect(0, 0, W, H);
 
-  // shimmering light rays from the surface
+  // night sky: stars twinkle in and a soft moon glows when it gets dark
+  const night = 1 - daylight;
+  const starA = clamp((night - 0.35) / 0.5, 0, 1);
+  if (starA > 0) {
+    for (const s of stars) {
+      const tw = 0.55 + 0.45 * Math.sin(causticT * 3 + s.p);
+      ctx.fillStyle = `rgba(235,245,255,${(starA * tw * 0.9).toFixed(3)})`;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, TAU); ctx.fill();
+    }
+    const mx = W * 0.82, my = H * 0.15;
+    const glow = ctx.createRadialGradient(mx, my, 0, mx, my, 80);
+    glow.addColorStop(0, `rgba(220,232,255,${(starA * 0.45).toFixed(3)})`);
+    glow.addColorStop(1, "rgba(220,232,255,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(mx, my, 80, 0, TAU); ctx.fill();
+    ctx.fillStyle = `rgba(245,248,255,${starA.toFixed(3)})`;
+    ctx.beginPath(); ctx.arc(mx, my, 22, 0, TAU); ctx.fill();
+  }
+
+  // shimmering light rays from the surface — fade away at night
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   for (let i = 0; i < 5; i++) {
     const x = (i / 5) * W + Math.sin(causticT + i) * 40;
     const grad = ctx.createLinearGradient(x, 0, x + 80, H);
-    grad.addColorStop(0, "rgba(180,230,255,0.10)");
+    grad.addColorStop(0, `rgba(180,230,255,${(0.10 * daylight).toFixed(3)})`);
     grad.addColorStop(1, "rgba(180,230,255,0)");
     ctx.fillStyle = grad;
     ctx.beginPath();
@@ -1264,11 +1317,11 @@ function drawBackground(dt) {
   }
   ctx.restore();
 
-  // sandy floor
+  // sandy floor — darkens at night along with the water
   const y = FLOOR();
   const sand = ctx.createLinearGradient(0, y - 20, 0, H);
-  sand.addColorStop(0, "#d9c08a");
-  sand.addColorStop(1, "#b89a5e");
+  sand.addColorStop(0, mixHex("#3a3a52", "#d9c08a", daylight));
+  sand.addColorStop(1, mixHex("#2a2a40", "#b89a5e", daylight));
   ctx.fillStyle = sand;
   ctx.beginPath();
   ctx.moveTo(0, y);
@@ -1277,6 +1330,14 @@ function drawBackground(dt) {
   }
   ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
   ctx.fill();
+}
+
+// a gentle indigo veil drawn over the whole scene to dim it at night
+function drawNightVeil() {
+  const night = 1 - daylight;
+  if (night <= 0.02) return;
+  ctx.fillStyle = `rgba(8,14,38,${(night * 0.32).toFixed(3)})`;
+  ctx.fillRect(0, 0, W, H);
 }
 
 /* =========================================================================
@@ -1323,6 +1384,13 @@ function addFish() {
 }
 function addCrab() { if (crabs.length < 8) { crabs.push(new Crab(rand(60, W - 60))); Sound.plop(); } }
 function addSeahorse() { if (seahorses.length < 8) { seahorses.push(new Seahorse(rand(60, W - 60))); Sound.plop(); } }
+function addPlant() {
+  if (decorations.filter(d => d instanceof Plant).length >= 16) return;
+  const p = new Plant(rand(40, W - 40), true);  // sprouts from a seed and grows
+  decorations.push(p);
+  Sound.plop();
+  spawnHearts(p.x, FLOOR() - 18, 1, 90);
+}
 function feedAt(x, y) {
   for (let i = 0; i < 5; i++) foods.push(new Food(x + rand(-20, 20), y + rand(-6, 6)));
   Sound.plop();
@@ -1495,6 +1563,7 @@ function frame(now) {
   fishes.forEach(f => f.draw());
   crabs.forEach(c => c.draw());
   drawDecorFront();
+  drawNightVeil();                            // dim the whole scene after dark
   canvas.style.cursor = fishUnderPointer() ? "pointer" : "default";
   drawHoverHighlights();
   hearts.forEach(h => h.draw());
@@ -1528,6 +1597,7 @@ document.getElementById("bFood").addEventListener("click", () => feedAt(rand(W *
 document.getElementById("bFish").addEventListener("click", addFish);
 document.getElementById("bCrab").addEventListener("click", addCrab);
 document.getElementById("bHorse").addEventListener("click", addSeahorse);
+document.getElementById("bPlant").addEventListener("click", addPlant);
 document.getElementById("bSound").addEventListener("click", (e) => {
   const isOn = Sound.toggle();
   e.target.textContent = isOn ? "🔊" : "🔇";
