@@ -411,10 +411,18 @@ class Fish {
       }
     }
 
-    // keep away from edges
+    // keep away from edges; near a side wall, also steer the wander heading
+    // back inward so the fish turns around instead of pressing into the glass
     const m = 60;
-    if (this.x < m) ax += (m - this.x) * 0.02;
-    if (this.x > W - m) ax -= (this.x - (W - m)) * 0.02;
+    const sin = Math.sin(this.wanderAng), cos = Math.cos(this.wanderAng);
+    if (this.x < m) {
+      ax += (m - this.x) * 0.03;
+      this.wanderAng = Math.atan2(sin, Math.abs(cos));   // aim rightward, off the left wall
+    }
+    if (this.x > W - m) {
+      ax -= (this.x - (W - m)) * 0.03;
+      this.wanderAng = Math.atan2(sin, -Math.abs(cos));  // aim leftward, off the right wall
+    }
     if (this.y < m) ay += (m - this.y) * 0.03;
     if (this.y > FLOOR() - 10) ay -= (this.y - (FLOOR() - 10)) * 0.05;
 
@@ -431,6 +439,10 @@ class Fish {
     this.y += this.vy * sp * dt;
     this.x = clamp(this.x, 10, W - 10);
     this.y = clamp(this.y, 24, FLOOR() - 6);
+
+    // bounce gently off the side walls instead of pressing into them
+    if (this.x <= 10 && this.vx < 0) this.vx = Math.abs(this.vx) * 0.5;
+    if (this.x >= W - 10 && this.vx > 0) this.vx = -Math.abs(this.vx) * 0.5;
 
     if (Math.abs(this.vx) > 0.05) this.dir = this.vx > 0 ? 1 : -1;
 
