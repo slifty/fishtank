@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>🐠 Fish Tank 🐠</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #00121f;
+    font-family: -apple-system, "Comic Sans MS", "Segoe UI", sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  #tank { display: block; width: 100vw; height: 100vh; cursor: pointer; }
+
+  /* On-screen toy buttons, big and chunky for little fingers */
+  #toolbar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px;
+    pointer-events: none;
+    flex-wrap: wrap;
+  }
+  .btn {
+    pointer-events: auto;
+    font-size: 30px;
+    line-height: 1;
+    width: 64px; height: 64px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    box-shadow: 0 3px 8px rgba(0,0,0,0.35);
+    cursor: pointer;
+    transition: transform 0.08s ease, background 0.15s ease;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btn:active { transform: scale(0.86); background: rgba(255,255,255,0.35); }
+
+  #count {
+    position: fixed;
+    top: 10px; left: 14px;
+    color: rgba(255,255,255,0.55);
+    font-size: 18px;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  }
+
+  /* Screensaver behaviour: the controls fade away when nothing is moving,
+     and come back the moment the mouse/finger does. */
+  #toolbar, #count { transition: opacity 0.6s ease; }
+  body.idle #toolbar, body.idle #count { opacity: 0; }
+
+  /* A gentle, self-dismissing hint that lets the browser unlock audio. */
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 90px;
+    text-align: center; color: rgba(255,255,255,0.7);
+    font-size: 4vmin; pointer-events: none; z-index: 10;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+    transition: opacity 1s ease;
+  }
+  #hint.gone { opacity: 0; }
+  .swim { display: inline-block; animation: bob 2s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0) rotate(-3deg);} 50% { transform: translateY(-14px) rotate(3deg);} }
+</style>
+</head>
+<body>
+<canvas id="tank"></canvas>
+<div id="count"></div>
+<div id="toolbar">
+  <button class="btn" id="bFood" title="Feed the fish">🍤</button>
+  <button class="btn" id="bFish" title="Add a fish">🐟</button>
+  <button class="btn" id="bCrab" title="Add a crab">🦀</button>
+  <button class="btn" id="bHorse" title="Add a seahorse">🐴</button>
+  <button class="btn" id="bSound" title="Sound on/off">🔊</button>
+</div>
+<div id="hint"><span class="swim">🐠</span> tap the water to feed the fish</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   FISH TANK — a calm aquarium toy.
+   Everything (art + sound) is generated in code, so there are no asset files
+   to lose. Just open this file in a browser.
+   ========================================================================= */
+
+const canvas = document.getElementById("tank");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ---------- little math helpers ---------- */
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+const TAU = Math.PI * 2;
+
+/* =========================================================================
+   SOUND — Web Audio, all tones synthesized so there are no audio files.
+   ========================================================================= */
+const Sound = (() => {
+  let ctxA = null;
+  let on = true;
+  let bubbleTimer = 0;
+
+  function ensure() {
+    if (!ctxA) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) ctxA = new AC();
+    }
+    if (ctxA && ctxA.state === "suspended") ctxA.resume();
+    return ctxA;
+  }
+
+  function tone(freq, dur, type = "sine", vol = 0.15, slideTo = null) {
+    if (!on) return;
+    const ac = ensure();
+    if (!ac) return;
+    const t = ac.currentTime;
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(vol, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gain).connect(ac.destination);
+    osc.start(t);
+    osc.stop(t + dur + 0.05);
+  }
+
+  return {
+    enable() { ensure(); },
+    toggle() { on = !on; return on; },
+    isOn() { return on; },
+    bubble() { tone(rand(420, 900), rand(0.08, 0.18), "sine", 0.05, rand(700, 1300)); },
+    plop() { tone(700, 0.12, "sine", 0.18, 220); },
+    chirp() { // friendship / happy
+      tone(660, 0.1, "triangle", 0.12, 990);
+      setTimeout(() => tone(880, 0.12, "triangle", 0.12, 1320), 90);
+    },
+    baby() { // sparkly arpeggio
+      [523, 659, 784, 1047].forEach((f, i) =>
+        setTimeout(() => tone(f, 0.16, "triangle", 0.13), i * 80));
+    },
+    surprise() {
+      [392, 523, 659, 784, 1047].forEach((f, i) =>
+        setTimeout(() => tone(f, 0.18, "square", 0.08), i * 70));
+    },
+    // ambient bubbling, called every frame
+    tick(dt) {
+      if (!on) return;
+      bubbleTimer -= dt;
+      if (bubbleTimer <= 0) {
+        bubbleTimer = rand(1.2, 3.5);
+        this.bubble();
+      }
+    },
+  };
+})();
+
+/* =========================================================================
+   GENETICS — every fish carries genes that mix when babies are born.
+   ========================================================================= */
+const BODY_SHAPES = ["round", "long", "tall", "kite"]; // silhouette
+const TAILS = ["fan", "fork", "round", "spike"];
+const PATTERNS = ["solid", "stripes", "spots", "belly"];
+
+function randomGenes() {
+  return {
+    kind: Math.random() < 0.16 ? "octopus" : "fish", // most are fish; some octopuses
+    arms: 8,                     // octopuses always have eight tentacles
+    hue: rand(0, 360),
+    hue2: rand(0, 360),          // secondary colour (pattern / belly)
+    sat: rand(55, 95),
+    light: rand(50, 70),
+    size: rand(0.7, 1.5),        // overall scale multiplier
+    aspect: rand(0.5, 0.85),     // body height / length
+    shape: pick(BODY_SHAPES),
+    tail: pick(TAILS),
+    pattern: pick(PATTERNS),
+    finSize: rand(0.7, 1.3),
+    speed: rand(0.75, 1.4),
+    eyeSize: rand(0.8, 1.3),
+    sociable: rand(0.3, 1),      // how eager to make friends
+  };
+}
+
+// blend two parents' genes, with a little mutation so babies vary
+function breed(a, b) {
+  const mixNum = (x, y, spread) => clamp(lerp(x, y, rand(0.3, 0.7)) + rand(-spread, spread), -Infinity, Infinity);
+  const mixHue = (x, y) => {
+    // circular blend of hue then small drift
+    let d = ((y - x + 540) % 360) - 180;
+    return (x + d * rand(0.3, 0.7) + rand(-18, 18) + 360) % 360;
+  };
+  const inherit = (x, y) => (Math.random() < 0.5 ? x : y);
+  return {
+    kind: Math.random() < 0.08 ? pick(["fish", "octopus"]) : inherit(a.kind, b.kind),
+    arms: 8,                     // octopuses always have eight tentacles
+    hue: mixHue(a.hue, b.hue),
+    hue2: mixHue(a.hue2, b.hue2),
+    sat: clamp(mixNum(a.sat, b.sat, 6), 45, 100),
+    light: clamp(mixNum(a.light, b.light, 5), 42, 75),
+    size: clamp(mixNum(a.size, b.size, 0.12), 0.55, 1.7),
+    aspect: clamp(mixNum(a.aspect, b.aspect, 0.05), 0.42, 0.95),
+    shape: Math.random() < 0.12 ? pick(BODY_SHAPES) : inherit(a.shape, b.shape),
+    tail: Math.random() < 0.12 ? pick(TAILS) : inherit(a.tail, b.tail),
+    pattern: Math.random() < 0.12 ? pick(PATTERNS) : inherit(a.pattern, b.pattern),
+    finSize: clamp(mixNum(a.finSize, b.finSize, 0.1), 0.5, 1.6),
+    speed: clamp(mixNum(a.speed, b.speed, 0.1), 0.6, 1.6),
+    eyeSize: clamp(mixNum(a.eyeSize, b.eyeSize, 0.1), 0.7, 1.5),
+    sociable: clamp(mixNum(a.sociable, b.sociable, 0.1), 0.2, 1),
+  };
+}
+
+const hsl = (h, s, l, a = 1) => `hsla(${h},${s}%,${l}%,${a})`;
+
+/* =========================================================================
+   ENTITY COLLECTIONS
+   ========================================================================= */
+const fishes = [];
+const crabs = [];
+const seahorses = [];
+const foods = [];
+const bubbles = [];
+const hearts = [];   // floating heart particles when friends/babies happen
+const decorations = [];
+const castles = [];  // subset of decorations that fish can swim in and out of
+const fishById = new Map();  // id -> fish, for walking family trees
+let nextId = 1;
+
+const FLOOR = () => H - 46;   // sandy bottom line
+
+/* =========================================================================
+   FISH
+   ========================================================================= */
+class Fish {
+  constructor(x, y, genes, baby = false) {
+    this.id = nextId++;
+    this.genes = genes || randomGenes();
+    this.x = x; this.y = y;
+    const ang = rand(0, TAU);
+    this.vx = Math.cos(ang);
+    this.vy = Math.sin(ang) * 0.4;
+    this.dir = this.vx >= 0 ? 1 : -1;
+    this.baseLen = 34 * this.genes.size;
+    this.grow = baby ? 0.35 : 1;        // babies start small and grow up
+    this.wobble = rand(0, TAU);
+    this.friends = new Set();
+    this.parents = [];                   // ids of mum & dad (empty for founders)
+    fishById.set(this.id, this);
+    this.target = null;                  // food being chased
+    this.mateCooldown = baby ? 45 : rand(4, 10);
+    this.age = 0;
+    this.thinkTimer = 0;
+    this.wanderAng = ang;
+    // castle visiting
+    this.inside = false;           // currently hidden inside a castle
+    this.hideTimer = 0;            // how long it stays inside
+    this.visiting = false;         // swimming toward a castle door
+    this.targetCastle = null;
+    this.castleTimer = rand(8, 30); // time until it next feels like exploring
+  }
+
+  get len() { return this.baseLen * this.grow; }
+
+  nearestFood() {
+    let best = null, bd = 220;
+    for (const f of foods) {
+      const d = dist(this.x, this.y, f.x, f.y);
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best;
+  }
+
+  update(dt) {
+    // --- tucked inside a castle: hidden, waiting to come back out ---
+    if (this.inside) {
+      this.age += dt;
+      if (this.grow < 1) this.grow = Math.min(1, this.grow + dt * 0.012);
+      this.hideTimer -= dt;
+      if (this.hideTimer <= 0) {
+        // pop back out of the doorway, swimming up and away
+        const c = this.targetCastle;
+        c.occupants = Math.max(0, c.occupants - 1);
+        this.inside = false;
+        this.targetCastle = null;
+        this.castleTimer = rand(15, 45);
+        this.x = c.door.x;
+        this.y = c.door.y - 4;
+        const out = pick([-1, 1]);
+        this.vx = out * 1.4; this.vy = -1.1; this.dir = out;
+        spawnHearts(this.x, this.y - 8, 1, 60);
+      }
+      return; // no swimming, drawing, or socializing while hidden
+    }
+
+    this.age += dt;
+    this.wobble += dt * 8 * this.genes.speed;
+    if (this.grow < 1) this.grow = Math.min(1, this.grow + dt * 0.012);
+    if (this.mateCooldown > 0) this.mateCooldown -= dt;
+
+    const sp = 42 * this.genes.speed;
+    let ax = 0, ay = 0;
+
+    // --- hungry? chase food ---
+    const food = this.nearestFood();
+    if (food) {
+      const d = dist(this.x, this.y, food.x, food.y) || 1;
+      ax += ((food.x - this.x) / d) * 2.2;
+      ay += ((food.y - this.y) / d) * 2.2;
+      if (d < this.len * 0.5) { food.eat(); }
+    } else if (this.visiting && this.targetCastle) {
+      // --- heading for a castle doorway to explore inside ---
+      const door = this.targetCastle.door;
+      const d = dist(this.x, this.y, door.x, door.y) || 1;
+      ax += ((door.x - this.x) / d) * 2.4;
+      ay += ((door.y - this.y) / d) * 2.4;
+      if (d < this.len * 0.6) {
+        // go inside!
+        this.inside = true;
+        this.visiting = false;
+        this.hideTimer = rand(2.5, 7);
+        this.targetCastle.occupants++;
+        spawnHearts(door.x, door.y, 1, 60);
+      }
+    } else {
+      // --- flock with friends, gently school together ---
+      let fx = 0, fy = 0, fn = 0, sx = 0, sy = 0;
+      for (const other of fishes) {
+        if (other === this || other.inside) continue;
+        const d = dist(this.x, this.y, other.x, other.y);
+        if (this.friends.has(other.id) && d < 260) {
+          fx += other.x; fy += other.y; fn++;
+          // match heading
+          sx += other.vx; sy += other.vy;
+        }
+        // gentle personal space from everyone close
+        if (d > 0 && d < this.len * 0.9) {
+          ax -= ((other.x - this.x) / d) * 0.9;
+          ay -= ((other.y - this.y) / d) * 0.9;
+        }
+      }
+      if (fn > 0) {
+        ax += ((fx / fn - this.x)) * 0.004;
+        ay += ((fy / fn - this.y)) * 0.004;
+        ax += sx * 0.05; ay += sy * 0.05;
+      }
+
+      // --- wander ---
+      this.thinkTimer -= dt;
+      if (this.thinkTimer <= 0) {
+        this.thinkTimer = rand(0.8, 2.5);
+        this.wanderAng += rand(-0.9, 0.9);
+      }
+      ax += Math.cos(this.wanderAng) * 0.8;
+      ay += Math.sin(this.wanderAng) * 0.35;
+
+      // --- occasionally decide to go explore a castle ---
+      this.castleTimer -= dt;
+      if (this.castleTimer <= 0 && castles.length && this.grow > 0.6) {
+        this.castleTimer = rand(15, 45);
+        if (Math.random() < 0.6) {
+          // pick a fairly nearby castle to visit
+          this.targetCastle = pick(castles);
+          this.visiting = true;
+        }
+      }
+    }
+
+    // keep away from edges
+    const m = 60;
+    if (this.x < m) ax += (m - this.x) * 0.02;
+    if (this.x > W - m) ax -= (this.x - (W - m)) * 0.02;
+    if (this.y < m) ay += (m - this.y) * 0.03;
+    if (this.y > FLOOR() - 10) ay -= (this.y - (FLOOR() - 10)) * 0.05;
+
+    // integrate velocity (with a little gentle buoyancy bob)
+    this.vx += ax * dt;
+    this.vy += ay * dt + Math.sin(this.wobble * 0.5) * 0.05 * dt;
+    // clamp speed
+    const v = Math.hypot(this.vx, this.vy) || 1;
+    const max = food ? 2.4 : 1.6;
+    if (v > max) { this.vx = (this.vx / v) * max; this.vy = (this.vy / v) * max; }
+    this.vy *= 0.985; // fish move more horizontally than vertically
+
+    this.x += this.vx * sp * dt;
+    this.y += this.vy * sp * dt;
+    this.x = clamp(this.x, 10, W - 10);
+    this.y = clamp(this.y, 24, FLOOR() - 6);
+
+    if (Math.abs(this.vx) > 0.05) this.dir = this.vx > 0 ? 1 : -1;
+
+    this.socialize(dt);
+  }
+
+  socialize(dt) {
+    for (const other of fishes) {
+      if (other === this || other.id < this.id || other.inside) continue; // each pair once
+      const d = dist(this.x, this.y, other.x, other.y);
+      if (d < this.len * 1.4) {
+        // become friends
+        if (!this.friends.has(other.id) &&
+            Math.random() < 0.05 * this.genes.sociable * other.genes.sociable) {
+          this.friends.add(other.id);
+          other.friends.add(this.id);
+          spawnHearts((this.x + other.x) / 2, (this.y + other.y) / 2, 3, 200);
+          Sound.chirp();
+        }
+        // friends + grown up + not on cooldown => baby!
+        if (this.friends.has(other.id) &&
+            this.grow >= 1 && other.grow >= 1 &&
+            this.mateCooldown <= 0 && other.mateCooldown <= 0 &&
+            fishes.length < 60 &&
+            Math.random() < 0.025) {
+          this.haveBaby(other);
+        }
+      }
+    }
+  }
+
+  haveBaby(other) {
+    this.mateCooldown = rand(18, 30);
+    other.mateCooldown = rand(18, 30);
+    const bx = (this.x + other.x) / 2;
+    const by = (this.y + other.y) / 2;
+    const baby = new Fish(bx, by, breed(this.genes, other.genes), true);
+    baby.parents = [this.id, other.id];
+    fishes.push(baby);
+    spawnHearts(bx, by, 8, 360);
+    Sound.baby();
+  }
+
+  draw() {
+    if (this.inside) return; // hidden inside a castle
+    if (this.genes.kind === "octopus") { this.drawOctopus(); return; }
+    const g = this.genes;
+    const L = this.len;
+    let aspect = g.aspect;
+    if (g.shape === "long") aspect *= 0.7;
+    if (g.shape === "tall") aspect *= 1.4;
+    if (g.shape === "kite") aspect *= 1.15;
+    const Bh = L * aspect;          // body height
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.scale(this.dir, 1);
+    const tailSwish = Math.sin(this.wobble) * 0.35;
+
+    const main = hsl(g.hue, g.sat, g.light);
+    const dark = hsl(g.hue, g.sat, g.light - 18);
+    const fin = hsl(g.hue2, g.sat, Math.min(78, g.light + 8), 0.9);
+
+    // ---- tail ----
+    ctx.save();
+    ctx.translate(-L * 0.45, 0);
+    ctx.rotate(tailSwish);
+    ctx.fillStyle = fin;
+    ctx.beginPath();
+    if (g.tail === "fork") {
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-L * 0.5, -Bh * 0.55);
+      ctx.lineTo(-L * 0.3, 0);
+      ctx.lineTo(-L * 0.5, Bh * 0.55);
+    } else if (g.tail === "round") {
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(-L * 0.55, -Bh * 0.5, -L * 0.5, 0);
+      ctx.quadraticCurveTo(-L * 0.55, Bh * 0.5, 0, 0);
+    } else if (g.tail === "spike") {
+      ctx.moveTo(0, -Bh * 0.2);
+      ctx.lineTo(-L * 0.7, 0);
+      ctx.lineTo(0, Bh * 0.2);
+    } else { // fan
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-L * 0.5 * g.finSize, -Bh * 0.6 * g.finSize);
+      ctx.lineTo(-L * 0.55 * g.finSize, 0);
+      ctx.lineTo(-L * 0.5 * g.finSize, Bh * 0.6 * g.finSize);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // ---- top fin ----
+    ctx.fillStyle = fin;
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.1, -Bh * 0.45);
+    ctx.quadraticCurveTo(L * 0.05, -Bh * (0.7 + 0.4 * g.finSize), L * 0.2, -Bh * 0.4);
+    ctx.closePath();
+    ctx.fill();
+
+    // ---- side fin (waving) ----
+    ctx.save();
+    ctx.translate(L * 0.05, Bh * 0.25);
+    ctx.rotate(Math.sin(this.wobble * 1.3) * 0.4 + 0.3);
+    ctx.fillStyle = fin;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, L * 0.18 * g.finSize, Bh * 0.18, 0, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+
+    // ---- body ----
+    const grad = ctx.createLinearGradient(0, -Bh * 0.5, 0, Bh * 0.5);
+    grad.addColorStop(0, hsl(g.hue, g.sat, g.light + 10));
+    grad.addColorStop(1, dark);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    if (g.shape === "kite") {
+      ctx.moveTo(L * 0.5, 0);
+      ctx.quadraticCurveTo(0, -Bh * 0.62, -L * 0.4, 0);
+      ctx.quadraticCurveTo(0, Bh * 0.62, L * 0.5, 0);
+    } else {
+      ctx.ellipse(0, 0, L * 0.5, Bh * 0.5, 0, 0, TAU);
+    }
+    ctx.fill();
+
+    // ---- pattern ----
+    ctx.save();
+    ctx.clip();
+    if (g.pattern === "stripes") {
+      ctx.fillStyle = hsl(g.hue2, g.sat, g.light - 6, 0.55);
+      for (let i = -2; i <= 2; i++) {
+        ctx.save();
+        ctx.translate(i * L * 0.18, 0);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, L * 0.05, Bh * 0.6, 0, 0, TAU);
+        ctx.fill();
+        ctx.restore();
+      }
+    } else if (g.pattern === "spots") {
+      ctx.fillStyle = hsl(g.hue2, g.sat, g.light + 6, 0.6);
+      for (let i = 0; i < 6; i++) {
+        ctx.beginPath();
+        ctx.arc(rand(-L * 0.3, L * 0.35), rand(-Bh * 0.3, Bh * 0.3), L * rand(0.04, 0.08), 0, TAU);
+        ctx.fill();
+      }
+    } else if (g.pattern === "belly") {
+      ctx.fillStyle = hsl(g.hue2, g.sat, Math.min(85, g.light + 18), 0.8);
+      ctx.beginPath();
+      ctx.ellipse(0, Bh * 0.22, L * 0.46, Bh * 0.3, 0, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // ---- eye ----
+    const ex = L * 0.3, ey = -Bh * 0.08, er = L * 0.08 * g.eyeSize;
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(ex, ey, er, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#102030";
+    ctx.beginPath(); ctx.arc(ex + er * 0.25, ey, er * 0.55, 0, TAU); ctx.fill();
+
+    // ---- smile ----
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = Math.max(1, L * 0.03);
+    ctx.beginPath();
+    ctx.arc(L * 0.4, Bh * 0.04, L * 0.12, 0.1, 1.0);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  // octopuses share every fish behaviour but get their own round-headed,
+  // many-tentacled look. Genes still drive colour, size, pattern and eyes.
+  drawOctopus() {
+    const g = this.genes;
+    const R = this.len * 0.55;       // head radius
+    const main = hsl(g.hue, g.sat, g.light);
+    const dark = hsl(g.hue, g.sat, g.light - 18);
+    const arms = g.arms || 8;
+
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.scale(this.dir, 1);
+
+    // ---- tentacles (drawn first, behind the head) ----
+    ctx.lineCap = "round";
+    for (let i = 0; i < arms; i++) {
+      const t = i / (arms - 1) - 0.5;          // -0.5..0.5 across the body
+      const baseX = t * R * 1.5;
+      const phase = this.wobble + i * 0.7;
+      const sway = Math.sin(phase) * R * 0.5;
+      const len = R * (1.4 + 0.3 * Math.sin(i * 1.3));
+      ctx.strokeStyle = i % 2 ? main : dark;
+      ctx.lineWidth = R * 0.32;
+      ctx.beginPath();
+      ctx.moveTo(baseX, R * 0.5);
+      ctx.quadraticCurveTo(baseX + sway * 0.6, R * 0.5 + len * 0.6,
+                           baseX + sway, R * 0.5 + len);
+      ctx.stroke();
+      // little suckers as a lighter dotted tip
+      ctx.fillStyle = hsl(g.hue2, g.sat, Math.min(85, g.light + 18), 0.8);
+      ctx.beginPath();
+      ctx.arc(baseX + sway, R * 0.5 + len, R * 0.07, 0, TAU);
+      ctx.fill();
+    }
+
+    // ---- head / mantle ----
+    const grad = ctx.createRadialGradient(0, -R * 0.3, R * 0.1, 0, 0, R * 1.2);
+    grad.addColorStop(0, hsl(g.hue, g.sat, g.light + 12));
+    grad.addColorStop(1, dark);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R, R * 1.15, 0, 0, TAU);
+    ctx.fill();
+
+    // ---- spots pattern (if any) ----
+    if (g.pattern === "spots") {
+      ctx.save();
+      ctx.beginPath(); ctx.ellipse(0, 0, R, R * 1.15, 0, 0, TAU); ctx.clip();
+      ctx.fillStyle = hsl(g.hue2, g.sat, g.light + 6, 0.55);
+      for (let i = 0; i < 6; i++) {
+        ctx.beginPath();
+        ctx.arc(rand(-R * 0.6, R * 0.6), rand(-R * 0.8, R * 0.4), R * rand(0.08, 0.16), 0, TAU);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // ---- two big friendly eyes ----
+    const er = R * 0.26 * g.eyeSize;
+    for (const sx of [-1, 1]) {
+      const exx = sx * R * 0.42, eyy = -R * 0.25;
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(exx, eyy, er, 0, TAU); ctx.fill();
+      ctx.fillStyle = "#102030";
+      ctx.beginPath(); ctx.arc(exx + er * 0.2, eyy + er * 0.1, er * 0.5, 0, TAU); ctx.fill();
+    }
+
+    // ---- smile ----
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = Math.max(1, R * 0.06);
+    ctx.beginPath();
+    ctx.arc(0, R * 0.1, R * 0.28, 0.25, Math.PI - 0.25);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
+   FOOD — sinks slowly; fish race to eat it
+   ========================================================================= */
+class Food {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.vy = rand(18, 30);
+    this.dead = false;
+    this.hue = rand(20, 50);
+    this.wob = rand(0, TAU);
+  }
+  eat() {
+    if (this.dead) return;
+    this.dead = true;
+    spawnHearts(this.x, this.y, 1, 120);
+  }
+  update(dt) {
+    this.wob += dt * 4;
+    this.x += Math.sin(this.wob) * 8 * dt;
+    this.y += this.vy * dt;
+    if (this.y > FLOOR() - 4) { this.y = FLOOR() - 4; this.vy = 0; this.ground = (this.ground || 0) + dt; if (this.ground > 8) this.dead = true; }
+  }
+  draw() {
+    ctx.fillStyle = hsl(this.hue, 80, 60);
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 4, 0, TAU);
+    ctx.fill();
+  }
+}
+
+/* =========================================================================
+   CRAB — scuttles along the sandy floor
+   ========================================================================= */
+class Crab {
+  constructor(x) {
+    this.x = x; this.dir = pick([-1, 1]);
+    this.hue = rand(0, 30);
+    this.size = rand(0.8, 1.3);
+    this.legPhase = 0;
+    this.pauseTimer = 0;
+    this.speed = rand(18, 30);
+  }
+  update(dt) {
+    this.legPhase += dt * 10;
+    if (this.pauseTimer > 0) { this.pauseTimer -= dt; return; }
+    this.x += this.dir * this.speed * dt;
+    if (Math.random() < 0.004) this.pauseTimer = rand(0.5, 2);
+    if (Math.random() < 0.003) this.dir *= -1;
+    if (this.x < 30) this.dir = 1;
+    if (this.x > W - 30) this.dir = -1;
+  }
+  draw() {
+    const y = FLOOR() - 6;
+    const s = 16 * this.size;
+    ctx.save();
+    ctx.translate(this.x, y);
+    const legY = Math.sin(this.legPhase) * 2;
+    ctx.strokeStyle = hsl(this.hue, 70, 35);
+    ctx.lineWidth = 2.2;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * s * 0.3, 0);
+      ctx.lineTo(i * s * 0.3 - s * 0.5, s * 0.5 + (i % 2 ? legY : -legY));
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(i * s * 0.3, 0);
+      ctx.lineTo(i * s * 0.3 + s * 0.5, s * 0.5 + (i % 2 ? -legY : legY));
+      ctx.stroke();
+    }
+    // claws
+    ctx.fillStyle = hsl(this.hue, 75, 45);
+    ctx.beginPath(); ctx.arc(-s * 0.8, -s * 0.1, s * 0.32, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(s * 0.8, -s * 0.1, s * 0.32, 0, TAU); ctx.fill();
+    // body
+    const grad = ctx.createLinearGradient(0, -s * 0.5, 0, s * 0.5);
+    grad.addColorStop(0, hsl(this.hue, 75, 55));
+    grad.addColorStop(1, hsl(this.hue, 75, 40));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s, s * 0.7, 0, 0, TAU);
+    ctx.fill();
+    // eyes on stalks
+    ctx.strokeStyle = hsl(this.hue, 70, 35); ctx.lineWidth = 2;
+    for (const ex of [-s * 0.3, s * 0.3]) {
+      ctx.beginPath(); ctx.moveTo(ex, -s * 0.5); ctx.lineTo(ex, -s * 0.9); ctx.stroke();
+      ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ex, -s * 0.95, s * 0.16, 0, TAU); ctx.fill();
+      ctx.fillStyle = "#102030"; ctx.beginPath(); ctx.arc(ex, -s * 0.95, s * 0.08, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
+   SEAHORSE — bobs gently up and down
+   ========================================================================= */
+class Seahorse {
+  constructor(x) {
+    this.x = x; this.y = rand(H * 0.4, FLOOR() - 60);
+    this.hue = rand(20, 320);
+    this.size = rand(0.8, 1.2);
+    this.t = rand(0, TAU);
+    this.dir = pick([-1, 1]);
+    this.baseY = this.y;
+  }
+  update(dt) {
+    this.t += dt * 2;
+    this.y = this.baseY + Math.sin(this.t) * 18;
+    this.x += this.dir * 8 * dt;
+    if (Math.random() < 0.004) this.dir *= -1;
+    if (this.x < 40) this.dir = 1;
+    if (this.x > W - 40) this.dir = -1;
+    if (Math.random() < 0.003) this.baseY = clamp(this.baseY + rand(-30, 30), H * 0.3, FLOOR() - 50);
+  }
+  draw() {
+    const s = 22 * this.size;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.scale(this.dir, 1);
+    ctx.fillStyle = hsl(this.hue, 70, 60);
+    ctx.strokeStyle = hsl(this.hue, 70, 45);
+    ctx.lineWidth = s * 0.5;
+    ctx.lineCap = "round";
+    // curvy body
+    ctx.beginPath();
+    ctx.moveTo(0, -s);
+    ctx.quadraticCurveTo(s * 0.6, -s * 0.4, s * 0.2, s * 0.3);
+    ctx.quadraticCurveTo(-s * 0.2, s * 0.9, s * 0.3, s * 1.2);
+    ctx.stroke();
+    // head/snout
+    ctx.beginPath();
+    ctx.moveTo(0, -s);
+    ctx.lineTo(s * 0.5, -s * 1.1);
+    ctx.lineTo(s * 0.55, -s * 0.85);
+    ctx.closePath();
+    ctx.fill();
+    // eye
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(s * 0.1, -s, s * 0.13, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#102030"; ctx.beginPath(); ctx.arc(s * 0.12, -s, s * 0.07, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
+   PARTICLES — bubbles + hearts
+   ========================================================================= */
+class Bubble {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.r = rand(2, 7);
+    this.vy = rand(20, 45);
+    this.wob = rand(0, TAU);
+  }
+  update(dt) {
+    this.wob += dt * 3;
+    this.y -= this.vy * dt;
+    this.x += Math.sin(this.wob) * 10 * dt;
+    return this.y > -10;
+  }
+  draw() {
+    ctx.strokeStyle = "rgba(255,255,255,0.45)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, TAU); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, TAU); ctx.fill();
+  }
+}
+
+class Heart {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.vy = rand(20, 40);
+    this.vx = rand(-15, 15);
+    this.life = 1;
+    this.s = rand(8, 16);
+  }
+  update(dt) {
+    this.y -= this.vy * dt;
+    this.x += this.vx * dt;
+    this.life -= dt * 0.7;
+    return this.life > 0;
+  }
+  draw() {
+    ctx.save();
+    ctx.globalAlpha = clamp(this.life, 0, 1);
+    ctx.font = this.s + "px serif";
+    ctx.fillText("💕", this.x, this.y);
+    ctx.restore();
+  }
+}
+
+function spawnHearts(x, y, n, _spread) {
+  for (let i = 0; i < n; i++) hearts.push(new Heart(x + rand(-10, 10), y + rand(-10, 10)));
+}
+
+/* =========================================================================
+   DECORATIONS — plants, rocks, castle, treasure chest (a surprise!)
+   ========================================================================= */
+class Plant {
+  constructor(x) {
+    this.x = x;
+    this.hue = rand(90, 160);
+    this.blades = randInt(3, 6);
+    this.h = rand(60, 150);
+    this.t = rand(0, TAU);
+  }
+  update(dt) { this.t += dt * 1.5; }
+  draw() {
+    const baseY = FLOOR();
+    for (let i = 0; i < this.blades; i++) {
+      const off = (i - this.blades / 2) * 8;
+      const sway = Math.sin(this.t + i) * 12;
+      const h = this.h * (0.6 + 0.4 * Math.random() * 0 + 0.4 * ((i % 2) + 1) / 2);
+      ctx.strokeStyle = hsl(this.hue + i * 5, 60, 35 + i * 3);
+      ctx.lineWidth = 7;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(this.x + off, baseY);
+      ctx.quadraticCurveTo(this.x + off + sway * 0.5, baseY - h * 0.5, this.x + off + sway, baseY - h);
+      ctx.stroke();
+    }
+  }
+}
+
+class Rock {
+  constructor(x) {
+    this.x = x; this.w = rand(40, 90); this.h = rand(20, 45);
+    this.hue = rand(200, 240); this.light = rand(20, 32);
+  }
+  update() {}
+  draw() {
+    const y = FLOOR();
+    ctx.fillStyle = hsl(this.hue, 12, this.light);
+    ctx.beginPath();
+    ctx.moveTo(this.x - this.w / 2, y);
+    ctx.quadraticCurveTo(this.x - this.w * 0.3, y - this.h, this.x, y - this.h);
+    ctx.quadraticCurveTo(this.x + this.w * 0.3, y - this.h, this.x + this.w / 2, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+class Castle {
+  constructor(x, scale = 1) {
+    this.x = x;
+    this.s = scale;
+    this.hue = rand(195, 225);
+    this.flagHue = rand(0, 360);
+    this.occupants = 0;   // how many fish are currently inside
+    this.lit = 0;         // eased 0..1 "someone's home" glow
+  }
+  update(dt) {
+    // ease the warm glow / flags in and out as fish come and go
+    const target = this.occupants > 0 ? 1 : 0;
+    this.lit += (target - this.lit) * Math.min(1, dt * 4);
+  }
+  // the doorway of the big central tower — where fish swim in and out
+  get door() { return { x: this.x, y: FLOOR() - 14 * this.s }; }
+  draw() {
+    const y = FLOOR();
+    const s = this.s;
+    const lit = this.lit;                 // 0..1 "someone's home"
+    const body = `hsl(${this.hue},15%,42%)`;
+    const dark = `hsl(${this.hue},18%,30%)`;
+    // warm window glow gets a gentle flicker when occupied
+    const flicker = lit > 0.01 ? 1 + Math.sin(causticT * 9 + this.x) * 0.06 : 1;
+
+    // a little pennant flag, used both on top and (when lit) on side towers
+    const drawFlag = (fx, topY, h, hue, raise) => {
+      if (raise <= 0.01) return;
+      const hh = h * raise;
+      ctx.save();
+      ctx.globalAlpha = raise;
+      ctx.fillStyle = `hsl(${hue},70%,55%)`;
+      ctx.fillRect(fx - 1, topY, 2, hh);
+      ctx.beginPath();
+      ctx.moveTo(fx + 1, topY + 2);
+      ctx.lineTo(fx + 14 * s, topY + 5);
+      ctx.lineTo(fx + 1, topY + 11);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    const drawTower = (cx, w, h, withDoor) => {
+      ctx.fillStyle = body;
+      ctx.fillRect(cx - w / 2, y - h, w, h);
+      // battlements
+      for (let i = 0; i < 3; i++) ctx.fillRect(cx - w / 2 + i * (w / 3), y - h - 6 * s, w / 4, 6 * s);
+      // window — dark when empty, glowing warm when a fish is inside
+      const wx = cx - w * 0.12, wy = y - h * 0.62, ww = w * 0.24, wh = h * 0.18;
+      ctx.fillStyle = dark;
+      ctx.fillRect(wx, wy, ww, wh);
+      if (lit > 0.01) {
+        ctx.save();
+        ctx.globalAlpha = lit * flicker;
+        // soft halo
+        const cxw = wx + ww / 2, cyw = wy + wh / 2;
+        const g = ctx.createRadialGradient(cxw, cyw, 0, cxw, cyw, ww * 1.8);
+        g.addColorStop(0, "hsla(45,100%,70%,0.9)");
+        g.addColorStop(1, "hsla(45,100%,70%,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(cxw - ww * 1.8, cyw - ww * 1.8, ww * 3.6, ww * 3.6);
+        // bright pane
+        ctx.fillStyle = "hsl(48,100%,72%)";
+        ctx.fillRect(wx, wy, ww, wh);
+        ctx.restore();
+      }
+      // door (only the big central tower gets the archway fish use)
+      if (withDoor) {
+        ctx.fillStyle = dark;
+        ctx.beginPath();
+        ctx.arc(cx, y - w * 0.22, w * 0.34, Math.PI, 0);
+        ctx.fillRect(cx - w * 0.34, y - w * 0.22, w * 0.68, w * 0.22);
+        // warm light spilling out of the doorway when occupied
+        if (lit > 0.01) {
+          ctx.save();
+          ctx.globalAlpha = lit * flicker;
+          const dy = y - w * 0.22;
+          const g = ctx.createRadialGradient(cx, dy, 0, cx, dy, w * 0.6);
+          g.addColorStop(0, "hsla(45,100%,72%,0.85)");
+          g.addColorStop(1, "hsla(45,100%,72%,0)");
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(cx, dy, w * 0.34, Math.PI, 0);
+          ctx.fillRect(cx - w * 0.34, dy, w * 0.68, w * 0.22);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+    };
+    drawTower(this.x - 26 * s, 26 * s, 60 * s, false);
+    drawTower(this.x + 26 * s, 26 * s, 60 * s, false);
+    drawTower(this.x, 38 * s, 90 * s, true);
+
+    // main flag always flies on the big tower
+    drawFlag(this.x, y - (90 + 26) * s, 26 * s, this.flagHue, 1);
+    // celebratory flags rise on the side towers when someone is home
+    drawFlag(this.x - 26 * s, y - (60 + 20) * s, 20 * s, (this.flagHue + 40) % 360, lit);
+    drawFlag(this.x + 26 * s, y - (60 + 20) * s, 20 * s, (this.flagHue + 200) % 360, lit);
+  }
+}
+
+class Chest {
+  constructor(x) { this.x = x; this.open = 0; this.timer = rand(8, 16); }
+  update(dt) {
+    this.timer -= dt;
+    if (this.timer <= 0) {
+      // surprise! pop open, spit bubbles + a coin shower
+      this.open = 1;
+      this.timer = rand(10, 22);
+      for (let i = 0; i < 14; i++) bubbles.push(new Bubble(this.x + rand(-14, 14), FLOOR() - 20));
+      Sound.surprise();
+      spawnHearts(this.x, FLOOR() - 40, 3, 200);
+    }
+    if (this.open > 0) this.open = Math.max(0, this.open - dt * 0.4);
+  }
+  draw() {
+    const y = FLOOR();
+    const w = 52, h = 30;
+    // base
+    ctx.fillStyle = "hsl(30,55%,32%)";
+    ctx.fillRect(this.x - w / 2, y - h, w, h);
+    ctx.fillStyle = "hsl(45,80%,55%)";
+    ctx.fillRect(this.x - w / 2, y - h * 0.5, w, 5);
+    // glow when open
+    if (this.open > 0.05) {
+      ctx.save();
+      ctx.globalAlpha = this.open;
+      ctx.fillStyle = "hsla(50,100%,70%,0.7)";
+      ctx.beginPath();
+      ctx.ellipse(this.x, y - h, w * 0.5, h * 0.7, 0, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
+    // lid (rotates open)
+    ctx.save();
+    ctx.translate(this.x - w / 2, y - h);
+    ctx.rotate(-this.open * 0.9);
+    ctx.fillStyle = "hsl(30,55%,38%)";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(w, 0);
+    ctx.quadraticCurveTo(w / 2, -h * 0.7, 0, 0);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
+   SURPRISES — occasional special visitors
+   ========================================================================= */
+let surpriseTimer = rand(20, 45);
+const visitors = []; // transient creatures that cross the tank
+
+class Whale {
+  constructor() {
+    this.dir = pick([-1, 1]);
+    this.x = this.dir === 1 ? -160 : W + 160;
+    this.y = rand(H * 0.2, H * 0.4);
+    this.t = 0;
+  }
+  update(dt) {
+    this.t += dt;
+    this.x += this.dir * 40 * dt;
+    this.y += Math.sin(this.t) * 6 * dt;
+    if (Math.random() < 0.02) bubbles.push(new Bubble(this.x + this.dir * 70, this.y - 40));
+    return this.dir === 1 ? this.x < W + 200 : this.x > -200;
+  }
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.scale(this.dir, 1);
+    ctx.fillStyle = "hsl(210,40%,55%)";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 90, 42, 0, 0, TAU);
+    ctx.fill();
+    // tail
+    ctx.beginPath();
+    ctx.moveTo(-80, 0);
+    ctx.lineTo(-130, -34); ctx.lineTo(-110, 0); ctx.lineTo(-130, 34);
+    ctx.closePath(); ctx.fill();
+    // belly
+    ctx.fillStyle = "hsl(210,30%,75%)";
+    ctx.beginPath(); ctx.ellipse(10, 16, 60, 18, 0, 0, TAU); ctx.fill();
+    // eye + smile
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(55, -8, 7, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#102030"; ctx.beginPath(); ctx.arc(57, -8, 4, 0, TAU); ctx.fill();
+    ctx.strokeStyle = "hsl(210,40%,35%)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(60, 6, 16, 0.1, 1.1); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+class Jellyfish {
+  constructor() {
+    this.x = rand(W * 0.2, W * 0.8);
+    this.y = H + 60;
+    this.hue = rand(270, 330);
+    this.t = rand(0, TAU);
+    this.size = rand(0.8, 1.4);
+  }
+  update(dt) {
+    this.t += dt * 3;
+    this.y -= (16 + Math.sin(this.t) * 8) * dt;
+    this.x += Math.sin(this.t * 0.5) * 6 * dt;
+    return this.y > -80;
+  }
+  draw() {
+    const s = 26 * this.size;
+    const squish = 1 + Math.sin(this.t) * 0.15;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.fillStyle = hsl(this.hue, 70, 65, 0.7);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s, s * squish, 0, Math.PI, TAU);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s, s * 0.4, 0, 0, Math.PI);
+    ctx.fill();
+    ctx.strokeStyle = hsl(this.hue, 70, 75, 0.6);
+    ctx.lineWidth = 2;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * s * 0.3, 0);
+      ctx.quadraticCurveTo(i * s * 0.3 + Math.sin(this.t + i) * 6, s * 1.2, i * s * 0.3 + Math.sin(this.t + i) * 10, s * 1.8);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// A friendly penguin that porpoises across the tank — diving up and down.
+class Penguin {
+  constructor() {
+    this.dir = pick([-1, 1]);
+    this.x = this.dir === 1 ? -90 : W + 90;
+    this.baseY = rand(H * 0.25, H * 0.55);
+    this.t = rand(0, TAU);
+    this.size = rand(0.85, 1.2);
+    this.y = this.baseY;
+  }
+  update(dt) {
+    this.t += dt * 3;
+    this.x += this.dir * 60 * dt;
+    this.y = this.baseY + Math.sin(this.t) * 34;   // porpoising dive
+    if (Math.random() < 0.04) bubbles.push(new Bubble(this.x, this.y + 6));
+    return this.dir === 1 ? this.x < W + 130 : this.x > -130;
+  }
+  draw() {
+    const s = 26 * this.size;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.scale(this.dir, 1);
+    ctx.rotate(Math.cos(this.t) * 0.3);            // tilt with the dive
+    // flipper behind body (waves)
+    ctx.save();
+    ctx.translate(-s * 0.1, 0);
+    ctx.rotate(Math.sin(this.t * 2) * 0.5 + 0.6);
+    ctx.fillStyle = "#23262e";
+    ctx.beginPath(); ctx.ellipse(0, s * 0.2, s * 0.5, s * 0.18, 0, 0, TAU); ctx.fill();
+    ctx.restore();
+    // feet
+    ctx.fillStyle = "#f5a623";
+    ctx.beginPath(); ctx.ellipse(-s * 0.35, s * 0.55, s * 0.2, s * 0.1, 0, 0, TAU); ctx.fill();
+    // body
+    ctx.fillStyle = "#2b2f38";
+    ctx.beginPath(); ctx.ellipse(0, 0, s, s * 0.64, 0, 0, TAU); ctx.fill();
+    // white belly
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.ellipse(s * 0.12, s * 0.12, s * 0.7, s * 0.5, 0, 0, TAU); ctx.fill();
+    // head
+    ctx.fillStyle = "#2b2f38";
+    ctx.beginPath(); ctx.arc(s * 0.82, -s * 0.18, s * 0.44, 0, TAU); ctx.fill();
+    // face patch
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(s * 0.95, -s * 0.08, s * 0.27, 0, TAU); ctx.fill();
+    // beak
+    ctx.fillStyle = "#f5a623";
+    ctx.beginPath();
+    ctx.moveTo(s * 1.18, -s * 0.18); ctx.lineTo(s * 1.6, -s * 0.02); ctx.lineTo(s * 1.18, s * 0.08);
+    ctx.closePath(); ctx.fill();
+    // eye
+    ctx.fillStyle = "#102030";
+    ctx.beginPath(); ctx.arc(s * 0.98, -s * 0.22, s * 0.075, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function triggerSurprise() {
+  const what = pick(["whale", "jelly", "jelly", "penguin", "penguin", "babyboom"]);
+  if (what === "whale") { visitors.push(new Whale()); Sound.surprise(); }
+  else if (what === "jelly") {
+    for (let i = 0; i < randInt(2, 4); i++) visitors.push(new Jellyfish());
+    Sound.chirp();
+  } else if (what === "penguin") {
+    visitors.push(new Penguin());
+    Sound.chirp();
+  } else if (what === "babyboom" && fishes.length >= 2 && fishes.length < 50) {
+    // a friendly pair somewhere has a surprise baby
+    Sound.baby();
+    const a = pick(fishes), b = pick(fishes);
+    if (a !== b) { const baby = new Fish((a.x+b.x)/2,(a.y+b.y)/2, breed(a.genes,b.genes), true); baby.parents = [a.id, b.id]; fishes.push(baby); spawnHearts(baby.x, baby.y, 6, 300); }
+  }
+}
+
+/* =========================================================================
+   BACKGROUND — gradient water + caustic light + sandy floor
+   ========================================================================= */
+let causticT = 0;
+function drawBackground(dt) {
+  causticT += dt * 0.3;
+  const water = ctx.createLinearGradient(0, 0, 0, H);
+  water.addColorStop(0, "#0a6ea0");
+  water.addColorStop(0.5, "#0a4f7a");
+  water.addColorStop(1, "#06304d");
+  ctx.fillStyle = water;
+  ctx.fillRect(0, 0, W, H);
+
+  // shimmering light rays from the surface
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 5; i++) {
+    const x = (i / 5) * W + Math.sin(causticT + i) * 40;
+    const grad = ctx.createLinearGradient(x, 0, x + 80, H);
+    grad.addColorStop(0, "rgba(180,230,255,0.10)");
+    grad.addColorStop(1, "rgba(180,230,255,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(x - 30, 0); ctx.lineTo(x + 30, 0);
+    ctx.lineTo(x + 110, H); ctx.lineTo(x + 30, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // sandy floor
+  const y = FLOOR();
+  const sand = ctx.createLinearGradient(0, y - 20, 0, H);
+  sand.addColorStop(0, "#d9c08a");
+  sand.addColorStop(1, "#b89a5e");
+  ctx.fillStyle = sand;
+  ctx.beginPath();
+  ctx.moveTo(0, y);
+  for (let x = 0; x <= W; x += 40) {
+    ctx.quadraticCurveTo(x + 20, y - 8 + Math.sin(x * 0.05) * 6, x + 40, y);
+  }
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fill();
+}
+
+/* =========================================================================
+   SET UP THE TANK
+   ========================================================================= */
+function seedTank() {
+  // a row of castles across the floor — fish can swim in and out of each one.
+  // scale the number to the tank width so a wide screen gets more castles.
+  const addCastle = (x, scale) => {
+    const c = new Castle(x, scale);
+    decorations.push(c);
+    castles.push(c);
+  };
+  const nCastles = clamp(Math.round(W / 320), 2, 6);
+  for (let i = 0; i < nCastles; i++) {
+    const x = (W * (i + 0.5)) / nCastles + rand(-30, 30);
+    addCastle(clamp(x, 80, W - 80), rand(0.7, 1.25));
+  }
+
+  decorations.push(new Chest(W * 0.85));
+  decorations.push(new Rock(W * 0.12));
+  decorations.push(new Rock(W * 0.6));
+  for (let i = 0; i < 6; i++) decorations.push(new Plant(rand(40, W - 40)));
+
+  // starting cast
+  for (let i = 0; i < 6; i++) fishes.push(new Fish(rand(60, W - 60), rand(80, H * 0.6)));
+  crabs.push(new Crab(rand(60, W - 60)));
+  seahorses.push(new Seahorse(rand(60, W - 60)));
+
+  // a few ambient bubbles to start
+  for (let i = 0; i < 12; i++) bubbles.push(new Bubble(rand(0, W), rand(0, H)));
+}
+
+/* draw order: rocks/castle/chest behind fish, plants partly in front */
+function drawDecorBack() { decorations.forEach(d => { if (!(d instanceof Plant)) d.draw(); }); }
+function drawDecorFront() { decorations.forEach(d => { if (d instanceof Plant) d.draw(); }); }
+
+/* spawn helpers used by buttons */
+function addFish() {
+  if (fishes.length < 60) {
+    fishes.push(new Fish(rand(60, W - 60), rand(80, H * 0.5)));
+    Sound.plop();
+  }
+}
+function addCrab() { if (crabs.length < 8) { crabs.push(new Crab(rand(60, W - 60))); Sound.plop(); } }
+function addSeahorse() { if (seahorses.length < 8) { seahorses.push(new Seahorse(rand(60, W - 60))); Sound.plop(); } }
+function feedAt(x, y) {
+  for (let i = 0; i < 5; i++) foods.push(new Food(x + rand(-20, 20), y + rand(-6, 6)));
+  Sound.plop();
+}
+
+/* =========================================================================
+   HOVER SPOTLIGHT — point at a fish to see its friends and relatives
+   ========================================================================= */
+let pointer = { x: 0, y: 0, active: false };
+let hovered = null;
+
+// every fish in `fish`'s blood line: itself + all ancestors (parents,
+// grandparents, …). Two fish are relatives when these sets overlap.
+function bloodline(fish) {
+  const seen = new Set();
+  const stack = [fish.id];
+  while (stack.length) {
+    const id = stack.pop();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const f = fishById.get(id);
+    if (f) for (const p of f.parents) stack.push(p);
+  }
+  return seen;
+}
+
+// pick the fish under the cursor (nearest one whose body covers the point)
+function fishUnderPointer() {
+  if (!pointer.active) return null;
+  let best = null, bd = Infinity;
+  for (const f of fishes) {
+    if (f.inside) continue;
+    const d = dist(pointer.x, pointer.y, f.x, f.y);
+    if (d < f.len * 0.7 && d < bd) { bd = d; best = f; }
+  }
+  return best;
+}
+
+function drawHoverHighlights() {
+  if (!hovered || hovered.inside || !fishes.includes(hovered)) return;
+
+  const friendIds = hovered.friends;
+  const myBlood = bloodline(hovered);
+  const relativeIds = new Set();
+  for (const f of fishes) {
+    if (f === hovered) continue;
+    const theirs = bloodline(f);
+    for (const id of theirs) { if (myBlood.has(id)) { relativeIds.add(f.id); break; } }
+  }
+
+  // dim the whole tank so the family pops out
+  ctx.fillStyle = "rgba(2,18,32,0.55)";
+  ctx.fillRect(0, 0, W, H);
+
+  const FRIEND = "hsl(140,80%,55%)";
+  const FAMILY = "hsl(45,95%,60%)";
+
+  // connecting lines from the hovered fish to each highlighted fish
+  ctx.lineWidth = 2;
+  for (const f of fishes) {
+    if (f === hovered) continue;
+    const isFriend = friendIds.has(f.id);
+    const isRel = relativeIds.has(f.id);
+    if (!isFriend && !isRel) continue;
+    ctx.strokeStyle = isRel ? FAMILY : FRIEND;
+    ctx.globalAlpha = 0.5;
+    ctx.setLineDash(isRel ? [6, 5] : []);
+    ctx.beginPath();
+    ctx.moveTo(hovered.x, hovered.y);
+    ctx.lineTo(f.x, f.y);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+
+  // redraw the hovered fish and its people at full brightness, with rings
+  const ring = (f, color, r) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, r, 0, TAU);
+    ctx.stroke();
+  };
+  for (const f of fishes) {
+    const isFriend = friendIds.has(f.id);
+    const isRel = relativeIds.has(f.id);
+    if (f !== hovered && !isFriend && !isRel) continue;
+    f.draw();
+    const base = f.len * 0.75 + 6;
+    if (f === hovered) ring(f, "#ffffff", base);
+    else {
+      if (isRel) ring(f, FAMILY, base);
+      if (isFriend) ring(f, FRIEND, base + (isRel ? 6 : 0));
+    }
+  }
+
+  // a little floating legend above the hovered fish
+  ctx.font = "16px -apple-system, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#fff";
+  const ly = hovered.y - hovered.len * 0.75 - 16;
+  ctx.fillText("💚 friends   💛 family", hovered.x, ly);
+  ctx.textAlign = "left";
+}
+
+/* =========================================================================
+   MAIN LOOP
+   ========================================================================= */
+let last = 0;
+let bubbleSpawn = 0;
+let autoFeedTimer = rand(6, 12);
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000 || 0);
+  last = now;
+
+  // --- update ---
+  Sound.tick(dt);
+  decorations.forEach(d => d.update(dt));
+
+  // ambient bubbles rising from the floor
+  bubbleSpawn -= dt;
+  if (bubbleSpawn <= 0) { bubbleSpawn = rand(0.3, 0.9); bubbles.push(new Bubble(rand(0, W), FLOOR())); }
+
+  fishes.forEach(f => f.update(dt));
+  crabs.forEach(c => c.update(dt));
+  seahorses.forEach(s => s.update(dt));
+  foods.forEach(f => f.update(dt));
+  for (let i = foods.length - 1; i >= 0; i--) if (foods[i].dead) foods.splice(i, 1);
+  for (let i = bubbles.length - 1; i >= 0; i--) if (!bubbles[i].update(dt)) bubbles.splice(i, 1);
+  for (let i = hearts.length - 1; i >= 0; i--) if (!hearts[i].update(dt)) hearts.splice(i, 1);
+  for (let i = visitors.length - 1; i >= 0; i--) if (!visitors[i].update(dt)) visitors.splice(i, 1);
+
+  surpriseTimer -= dt;
+  if (surpriseTimer <= 0) { surpriseTimer = rand(25, 55); triggerSurprise(); }
+
+  // passive feeding: every so often a little food drifts down on its own,
+  // so the fish keep foraging even when nobody is watching.
+  autoFeedTimer -= dt;
+  if (autoFeedTimer <= 0) {
+    autoFeedTimer = rand(10, 20);
+    if (foods.length < 6) {
+      const fx = rand(W * 0.2, W * 0.8);
+      for (let i = 0; i < 3; i++) foods.push(new Food(fx + rand(-20, 20), rand(-10, 20)));
+    }
+  }
+
+  // --- draw ---
+  drawBackground(dt);
+  drawDecorBack();
+  visitors.forEach(v => v.draw());           // whales/jellies drift behind plants
+  bubbles.forEach(b => b.draw());
+  foods.forEach(f => f.draw());
+  seahorses.forEach(s => s.draw());
+  fishes.forEach(f => f.draw());
+  crabs.forEach(c => c.draw());
+  drawDecorFront();
+  hovered = fishUnderPointer();
+  canvas.style.cursor = hovered ? "default" : "pointer";
+  drawHoverHighlights();
+  hearts.forEach(h => h.draw());
+
+  document.getElementById("count").textContent =
+    `🐟 ${fishes.length}   🦀 ${crabs.length}   🐴 ${seahorses.length}`;
+
+  requestAnimationFrame(frame);
+}
+
+/* =========================================================================
+   INPUT
+   ========================================================================= */
+function tankXY(e) {
+  const t = e.touches ? e.touches[0] : e;
+  return { x: t.clientX, y: t.clientY };
+}
+canvas.addEventListener("pointerdown", (e) => {
+  const { x, y } = tankXY(e);
+  feedAt(x, y);   // tapping the water drops food where you tapped
+});
+
+document.getElementById("bFood").addEventListener("click", () => feedAt(rand(W * 0.3, W * 0.7), 40));
+document.getElementById("bFish").addEventListener("click", addFish);
+document.getElementById("bCrab").addEventListener("click", addCrab);
+document.getElementById("bHorse").addEventListener("click", addSeahorse);
+document.getElementById("bSound").addEventListener("click", (e) => {
+  const isOn = Sound.toggle();
+  e.target.textContent = isOn ? "🔊" : "🔇";
+});
+// stop buttons from also dropping food
+document.querySelectorAll(".btn").forEach(b =>
+  b.addEventListener("pointerdown", (e) => e.stopPropagation()));
+
+/* --- audio unlock: browsers only allow sound after a gesture, so we wait
+   for the first tap/key, then quietly turn it on and fade the hint away. --- */
+const hintEl = document.getElementById("hint");
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  Sound.enable();
+  hintEl.classList.add("gone");
+}
+window.addEventListener("pointerdown", unlockAudio, { once: false });
+window.addEventListener("keydown", unlockAudio, { once: false });
+// fade the hint out on its own after a while even if untouched
+setTimeout(() => hintEl.classList.add("gone"), 8000);
+
+/* --- screensaver idle behaviour: hide the controls when the mouse is still,
+   reveal them on any movement --- */
+let idleTimer = null;
+function wake() {
+  document.body.classList.remove("idle");
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => document.body.classList.add("idle"), 4000);
+}
+window.addEventListener("pointermove", wake);
+window.addEventListener("pointerdown", wake);
+window.addEventListener("keydown", wake);
+
+/* --- track the pointer so the frame loop can spotlight the fish under it --- */
+canvas.addEventListener("pointermove", (e) => {
+  const { x, y } = tankXY(e);
+  pointer.x = x; pointer.y = y; pointer.active = true;
+});
+canvas.addEventListener("pointerleave", () => { pointer.active = false; });
+
+/* --- auto-start: the tank comes alive on its own, no tap required --- */
+seedTank();
+wake();
+requestAnimationFrame((t) => { last = t; frame(t); });
+</script>
+</body>
+</html>
