@@ -115,6 +115,17 @@ resize();
 const rand = (a, b) => a + Math.random() * (b - a);
 const randInt = (a, b) => Math.floor(rand(a, b + 1));
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+// cute, toddler-friendly names handed out to each fish when it's born
+const NAMES = [
+  "Bubbles", "Nemo", "Dory", "Goldie", "Finn", "Coral", "Splash", "Sunny",
+  "Pearl", "Marlin", "Wanda", "Gill", "Flipper", "Squirt", "Ziggy", "Pebbles",
+  "Mango", "Bluey", "Sushi", "Captain", "Nibbles", "Glimmer", "Sandy", "Pip",
+  "Taffy", "Bloop", "Waddles", "Marina", "Skipper", "Dot", "Pickle", "Mochi",
+  "Sprout", "Bonbon", "Guppy", "Wiggles", "Munchkin", "Twinkle", "Noodle",
+  "Biscuit", "Comet", "Pumpkin", "Clementine", "Pancake", "Jellybean",
+];
+const randomName = () => pick(NAMES);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
@@ -264,6 +275,7 @@ const FLOOR = () => H - 46;   // sandy bottom line
 class Fish {
   constructor(x, y, genes, baby = false) {
     this.id = nextId++;
+    this.name = randomName();
     this.genes = genes || randomGenes();
     this.x = x; this.y = y;
     const ang = rand(0, TAU);
@@ -272,6 +284,7 @@ class Fish {
     this.dir = this.vx >= 0 ? 1 : -1;
     this.baseLen = 34 * this.genes.size;
     this.grow = baby ? 0.35 : 1;        // babies start small and grow up
+    this.fed = 1;                       // grows a little each time it eats (capped)
     this.wobble = rand(0, TAU);
     this.friends = new Set();
     this.parents = [];                   // ids of mum & dad (empty for founders)
@@ -289,7 +302,7 @@ class Fish {
     this.castleTimer = rand(8, 30); // time until it next feels like exploring
   }
 
-  get len() { return this.baseLen * this.grow; }
+  get len() { return this.baseLen * this.grow * this.fed; }
 
   nearestFood() {
     let best = null, bd = 220;
@@ -336,7 +349,10 @@ class Fish {
       const d = dist(this.x, this.y, food.x, food.y) || 1;
       ax += ((food.x - this.x) / d) * 2.2;
       ay += ((food.y - this.y) / d) * 2.2;
-      if (d < this.len * 0.5) { food.eat(); }
+      if (d < this.len * 0.5 && !food.dead) {
+        food.eat();
+        this.fed = Math.min(1.6, this.fed + 0.015); // a little bigger each meal
+      }
     } else if (this.visiting && this.targetCastle) {
       // --- heading for a castle doorway to explore inside ---
       const door = this.targetCastle.door;
@@ -1339,14 +1355,10 @@ function fishUnderPointer() {
   return fishAt(pointer.x, pointer.y);
 }
 
-// turn a fish's age (seconds of tank time) into a friendly label
-function formatAge(sec) {
-  sec = Math.floor(sec);
-  if (sec < 60) return sec + "s";
-  const m = Math.floor(sec / 60), s = sec % 60;
-  if (m < 60) return m + "m " + s + "s";
-  const h = Math.floor(m / 60);
-  return h + "h " + (m % 60) + "m";
+// a fish ages one year for every minute of tank time (whole years only)
+function ageInYears(sec) {
+  const y = Math.floor(sec / 60);
+  return y + (y === 1 ? " year old" : " years old");
 }
 
 function drawHoverHighlights() {
@@ -1407,13 +1419,16 @@ function drawHoverHighlights() {
     }
   }
 
-  // a little floating legend above the selected fish: its age, then the key
-  ctx.font = "16px -apple-system, sans-serif";
+  // a little floating card above the selected fish: name, age, then the key
   ctx.textAlign = "center";
   ctx.fillStyle = "#fff";
+  const cx = selected.x;
   const ly = selected.y - selected.len * 0.75 - 16;
-  ctx.fillText("💚 friends   💛 family", selected.x, ly);
-  ctx.fillText("🎂 age " + formatAge(selected.age), selected.x, ly - 20);
+  ctx.font = "bold 20px -apple-system, sans-serif";
+  ctx.fillText(selected.name, cx, ly - 44);
+  ctx.font = "16px -apple-system, sans-serif";
+  ctx.fillText("🎂 " + ageInYears(selected.age), cx, ly - 22);
+  ctx.fillText("💚 friends   💛 family", cx, ly);
   ctx.textAlign = "left";
 }
 
