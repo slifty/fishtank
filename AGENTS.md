@@ -90,7 +90,12 @@ Reading top to bottom, the file is laid out as:
 ## Changelog
 
 There's an in-app "what's new" panel (`#changelog`, opened with the 📜 button).
-When you ship a user-visible feature, add an entry there so players see it.
+
+**Update it whenever you make an improvement to the game** — a new feature,
+creature, trait, or other player-visible enhancement gets an entry so players
+see what's new. **Do not** add entries for ordinary bug fixes; only note a fix
+here if it's major (a significant, clearly player-visible change in behaviour).
+When in doubt: improvements yes, routine fixes no.
 
 ## Deploying
 
