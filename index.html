@@ -72,6 +72,36 @@
   #hint.gone { opacity: 0; }
   .swim { display: inline-block; animation: bob 2s ease-in-out infinite; }
   @keyframes bob { 0%,100% { transform: translateY(0) rotate(-3deg);} 50% { transform: translateY(-14px) rotate(3deg);} }
+
+  /* Changelog ("what's new") panel, opened from the menu bar. */
+  #changelog {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(2,12,22,0.55);
+    backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    transition: opacity 0.25s ease;
+  }
+  #changelog.hidden { opacity: 0; pointer-events: none; }
+  #changelog .card {
+    pointer-events: auto;
+    width: min(560px, 88vw); max-height: 78vh; overflow-y: auto;
+    background: rgba(8,28,44,0.97); color: #eaf6ff;
+    border-radius: 18px; padding: 20px 24px 26px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    -webkit-overflow-scrolling: touch;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+  }
+  #changelog .close {
+    position: sticky; top: 0; float: right; margin: -4px -8px 0 0;
+    border: none; background: rgba(255,255,255,0.16); color: #fff;
+    width: 36px; height: 36px; border-radius: 50%; font-size: 20px; cursor: pointer;
+  }
+  #changelog h2 { margin: 0 0 2px; font-size: 26px; }
+  #changelog .sub { margin: 0 0 14px; color: rgba(220,240,255,0.55); font-size: 14px; }
+  #changelog h3 { margin: 18px 0 4px; font-size: 16px; color: #9fe0ff; }
+  #changelog .date { color: rgba(220,240,255,0.45); font-size: 13px; font-weight: normal; }
+  #changelog ul { margin: 0; padding-left: 20px; line-height: 1.5; }
+  #changelog li { margin: 3px 0; }
 </style>
 </head>
 <body>
@@ -84,9 +114,56 @@
   <button class="btn" id="bHorse" title="Add a seahorse">🐴</button>
   <button class="btn" id="bPlant" title="Plant seaweed">🌱</button>
   <button class="btn" id="bDay" title="Day / night: cycle, always day, always night">🌗</button>
+  <button class="btn" id="bLog" title="What's new">📜</button>
   <button class="btn" id="bSound" title="Sound on/off">🔇</button>
 </div>
 <div id="hint"><span class="swim">🐠</span> tap the water to feed the fish</div>
+
+<div id="changelog" class="hidden">
+  <div class="card">
+    <button class="close" id="logClose" title="Close">✕</button>
+    <h2>🐠 What's New</h2>
+    <p class="sub">A little aquarium that keeps growing.</p>
+
+    <h3>Friends, family &amp; rivalries <span class="date">· Jun 5, 2026</span></h3>
+    <ul>
+      <li>Fish make up to <b>5 friends</b> and gently swim toward them.</li>
+      <li>Fish never befriend or have babies with <b>family</b> (parents, siblings, cousins).</li>
+      <li>Every fish now has a <b>hunger meter</b> that rises over time and refills when it eats.</li>
+      <li>A hungry fish can turn into an <b>enemy</b> of one that eats right in front of it (up to 3). Enemies swim away from each other.</li>
+    </ul>
+
+    <h3>More fish variety <span class="date">· Jun 5, 2026</span></h3>
+    <ul>
+      <li>New inherited traits: ✨ glow, 🫧 bubbles, 🦄 horn, 🐱 whiskers, 👁️ eyelashes.</li>
+      <li>Glowing fish shine much brighter at night.</li>
+    </ul>
+
+    <h3>Day &amp; night <span class="date">· Jun 4, 2026</span></h3>
+    <ul>
+      <li>The tank drifts through day and night, with stars and a moon after dark.</li>
+      <li>🌗 button to choose: cycle, always day, or always night.</li>
+      <li>A sparkly patch of surface light appears now and then and tempts fish upward.</li>
+    </ul>
+
+    <h3>A growing garden <span class="date">· Jun 4, 2026</span></h3>
+    <ul>
+      <li>🌱 button plants seaweed that sprouts from a seed and grows tall.</li>
+    </ul>
+
+    <h3>Meet the fish <span class="date">· Jun 4, 2026</span></h3>
+    <ul>
+      <li>Every fish has a name and an age (1 year per minute).</li>
+      <li>Tap a fish to see its info, friends and family.</li>
+      <li>Fish grow a little bigger each time they eat.</li>
+    </ul>
+
+    <h3>Hello, tank! <span class="date">· Jun 4, 2026</span></h3>
+    <ul>
+      <li>Fish, octopuses, crabs, seahorses, castles, bubbles, and surprise whales &amp; jellyfish.</li>
+    </ul>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -177,6 +254,10 @@ const Sound = (() => {
     chirp() { // friendship / happy
       tone(660, 0.1, "triangle", 0.12, 990);
       setTimeout(() => tone(880, 0.12, "triangle", 0.12, 1320), 90);
+    },
+    grumble() { // a grumpy little growl when fish fall out
+      tone(180, 0.18, "sawtooth", 0.08, 90);
+      setTimeout(() => tone(140, 0.2, "sawtooth", 0.07, 80), 80);
     },
     baby() { // sparkly arpeggio
       [523, 659, 784, 1047].forEach((f, i) =>
@@ -309,7 +390,9 @@ class Fish {
     this.grow = baby ? 0.35 : 1;        // babies start small and grow up
     this.fed = 1;                       // grows a little each time it eats (capped)
     this.wobble = rand(0, TAU);
-    this.friends = new Set();
+    this.friends = new Set();            // max 5 — fish swim toward friends
+    this.enemies = new Set();            // max 3 — fish swim away from enemies
+    this.hunger = rand(0, 0.35);         // 0 = full, 1 = starving; rises over time
     this.parents = [];                   // ids of mum & dad (empty for founders)
     fishById.set(this.id, this);
     this.target = null;                  // food being chased
@@ -362,6 +445,7 @@ class Fish {
 
     this.age += dt;
     this.wobble += dt * 8 * this.genes.speed;
+    this.hunger = Math.min(1, this.hunger + dt * 0.012); // slowly gets peckish
     if (this.grow < 1) this.grow = Math.min(1, this.grow + dt * 0.012);
     if (this.mateCooldown > 0) this.mateCooldown -= dt;
 
@@ -386,6 +470,8 @@ class Fish {
       if (d < this.len * 0.5 && !food.dead) {
         food.eat();
         this.fed = Math.min(1.6, this.fed + 0.015); // a little bigger each meal
+        this.hunger = Math.max(0, this.hunger - 0.45); // and nicely full again
+        this.provokeEnemies();                          // hungry onlookers get jealous
       }
     } else if (this.visiting && this.targetCastle) {
       // --- heading for a castle doorway to explore inside ---
@@ -402,7 +488,7 @@ class Fish {
         spawnHearts(door.x, door.y, 1, 60);
       }
     } else {
-      // --- flock with friends, gently school together ---
+      // --- school toward friends, shy away from enemies ---
       let fx = 0, fy = 0, fn = 0, sx = 0, sy = 0;
       for (const other of fishes) {
         if (other === this || other.inside) continue;
@@ -412,6 +498,12 @@ class Fish {
           // match heading
           sx += other.vx; sy += other.vy;
         }
+        // enemies: actively swim away, harder the closer they are
+        if (this.enemies.has(other.id) && d > 0 && d < 320) {
+          const push = 1 - d / 320;
+          ax -= ((other.x - this.x) / d) * 2.4 * push;
+          ay -= ((other.y - this.y) / d) * 1.5 * push;
+        }
         // gentle personal space from everyone close
         if (d > 0 && d < this.len * 0.9) {
           ax -= ((other.x - this.x) / d) * 0.9;
@@ -419,9 +511,9 @@ class Fish {
         }
       }
       if (fn > 0) {
-        ax += ((fx / fn - this.x)) * 0.004;
-        ay += ((fy / fn - this.y)) * 0.004;
-        ax += sx * 0.05; ay += sy * 0.05;
+        ax += ((fx / fn - this.x)) * 0.006;
+        ay += ((fy / fn - this.y)) * 0.006;
+        ax += sx * 0.06; ay += sy * 0.06;
       }
 
       // --- wander ---
@@ -496,24 +588,52 @@ class Fish {
       if (other === this || other.id < this.id || other.inside) continue; // each pair once
       const d = dist(this.x, this.y, other.x, other.y);
       if (d < this.len * 1.4) {
-        // become friends
-        if (!this.friends.has(other.id) &&
+        // become friends — but never with family or sworn enemies, and only if
+        // both still have room in their friend circle (max 5 each)
+        if (!this.friends.has(other.id) && !this.enemies.has(other.id) &&
+            this.friends.size < 5 && other.friends.size < 5 &&
+            !related(this, other) &&
             Math.random() < 0.05 * this.genes.sociable * other.genes.sociable) {
           this.friends.add(other.id);
           other.friends.add(this.id);
           spawnHearts((this.x + other.x) / 2, (this.y + other.y) / 2, 3, 200);
           Sound.chirp();
         }
-        // friends + grown up + not on cooldown => baby!
+        // friends + grown up + not on cooldown => baby! (never with family)
         if (this.friends.has(other.id) &&
             this.grow >= 1 && other.grow >= 1 &&
             this.mateCooldown <= 0 && other.mateCooldown <= 0 &&
+            !related(this, other) &&
             fishes.length < 60 &&
             Math.random() < 0.025) {
           this.haveBaby(other);
         }
       }
     }
+  }
+
+  // a hungry fish that just watched this one eat right in front of it may take
+  // offence and become an enemy (mutual). Caps at 3 enemies on either side.
+  provokeEnemies() {
+    for (const other of fishes) {
+      if (other === this || other.inside) continue;
+      if (other.hunger < 0.5) continue;                       // only hungry fish get jealous
+      const d = dist(this.x, this.y, other.x, other.y);
+      if (d > 160) continue;
+      if ((this.x - other.x) * other.dir < 0) continue;       // must be in front of the onlooker
+      if (other.enemies.has(this.id)) continue;
+      if (other.enemies.size >= 3 || this.enemies.size >= 3) continue;
+      if (Math.random() < 0.4) other.makeEnemy(this);
+    }
+  }
+
+  makeEnemy(other) {
+    if (this.enemies.size >= 3 || other.enemies.size >= 3) return;
+    // a falling out ends any friendship between them
+    this.friends.delete(other.id); other.friends.delete(this.id);
+    this.enemies.add(other.id); other.enemies.add(this.id);
+    spawnEmoji((this.x + other.x) / 2, (this.y + other.y) / 2, 2, "💢");
+    Sound.grumble();
   }
 
   haveBaby(other) {
@@ -971,12 +1091,13 @@ class Bubble {
 }
 
 class Heart {
-  constructor(x, y) {
+  constructor(x, y, char = "💕") {
     this.x = x; this.y = y;
     this.vy = rand(20, 40);
     this.vx = rand(-15, 15);
     this.life = 1;
     this.s = rand(8, 16);
+    this.char = char;
   }
   update(dt) {
     this.y -= this.vy * dt;
@@ -988,13 +1109,17 @@ class Heart {
     ctx.save();
     ctx.globalAlpha = clamp(this.life, 0, 1);
     ctx.font = this.s + "px serif";
-    ctx.fillText("💕", this.x, this.y);
+    ctx.fillText(this.char, this.x, this.y);
     ctx.restore();
   }
 }
 
 function spawnHearts(x, y, n, _spread) {
   for (let i = 0; i < n; i++) hearts.push(new Heart(x + rand(-10, 10), y + rand(-10, 10)));
+}
+// little floating emoji puffs (e.g. 💢 when two fish fall out)
+function spawnEmoji(x, y, n, char) {
+  for (let i = 0; i < n; i++) hearts.push(new Heart(x + rand(-10, 10), y + rand(-10, 10), char));
 }
 
 /* =========================================================================
@@ -1571,6 +1696,15 @@ function bloodline(fish) {
   return seen;
 }
 
+// two fish are family if their blood lines share anyone — i.e. they have a
+// common ancestor (covers parents, children, siblings, cousins, …)
+function related(a, b) {
+  const ba = bloodline(a), bb = bloodline(b);
+  const [small, big] = ba.size < bb.size ? [ba, bb] : [bb, ba];
+  for (const id of small) if (big.has(id)) return true;
+  return false;
+}
+
 // pick the nearest fish whose body covers the given point (null if none)
 function fishAt(x, y) {
   let best = null, bd = Infinity;
@@ -1598,6 +1732,7 @@ function drawHoverHighlights() {
   if (!selected || selected.inside || !fishes.includes(selected)) return;
 
   const friendIds = selected.friends;
+  const enemyIds = selected.enemies;
   const myBlood = bloodline(selected);
   const relativeIds = new Set();
   for (const f of fishes) {
@@ -1612,6 +1747,7 @@ function drawHoverHighlights() {
 
   const FRIEND = "hsl(140,80%,55%)";
   const FAMILY = "hsl(45,95%,60%)";
+  const ENEMY = "hsl(0,85%,60%)";
 
   // connecting lines from the selected fish to each highlighted fish
   ctx.lineWidth = 2;
@@ -1619,10 +1755,11 @@ function drawHoverHighlights() {
     if (f === selected) continue;
     const isFriend = friendIds.has(f.id);
     const isRel = relativeIds.has(f.id);
-    if (!isFriend && !isRel) continue;
-    ctx.strokeStyle = isRel ? FAMILY : FRIEND;
+    const isEnemy = enemyIds.has(f.id);
+    if (!isFriend && !isRel && !isEnemy) continue;
+    ctx.strokeStyle = isEnemy ? ENEMY : (isRel ? FAMILY : FRIEND);
     ctx.globalAlpha = 0.5;
-    ctx.setLineDash(isRel ? [6, 5] : []);
+    ctx.setLineDash(isRel && !isEnemy ? [6, 5] : []);
     ctx.beginPath();
     ctx.moveTo(selected.x, selected.y);
     ctx.lineTo(f.x, f.y);
@@ -1642,18 +1779,20 @@ function drawHoverHighlights() {
   for (const f of fishes) {
     const isFriend = friendIds.has(f.id);
     const isRel = relativeIds.has(f.id);
-    if (f !== selected && !isFriend && !isRel) continue;
+    const isEnemy = enemyIds.has(f.id);
+    if (f !== selected && !isFriend && !isRel && !isEnemy) continue;
     f.draw();
     const base = f.len * 0.75 + 6;
     if (f === selected) ring(f, "#ffffff", base);
     else {
-      if (isRel) ring(f, FAMILY, base);
-      if (isFriend) ring(f, FRIEND, base + (isRel ? 6 : 0));
+      if (isEnemy) ring(f, ENEMY, base);
+      if (isRel) ring(f, FAMILY, base + (isEnemy ? 6 : 0));
+      if (isFriend) ring(f, FRIEND, base + (isRel || isEnemy ? 6 : 0));
     }
   }
 
-  // a little floating card above the selected fish: special traits, name,
-  // age, then the friend/family key
+  // a little floating card above the selected fish: traits, name, hunger,
+  // age, then the relationship key
   ctx.textAlign = "center";
   ctx.fillStyle = "#fff";
   const cx = selected.x;
@@ -1666,11 +1805,17 @@ function drawHoverHighlights() {
   if (sg.whiskers) traits.push("🐱");
   if (sg.eyelashes) traits.push("👁️");
   ctx.font = "bold 20px -apple-system, sans-serif";
-  ctx.fillText(selected.name, cx, ly - 44);
+  ctx.fillText(selected.name, cx, ly - 66);
   ctx.font = "16px -apple-system, sans-serif";
-  if (traits.length) ctx.fillText(traits.join("  "), cx, ly - 66);
+  if (traits.length) ctx.fillText(traits.join("  "), cx, ly - 88);
+  // hunger meter — five dots, green when full, red when starving
+  const fullness = clamp(1 - selected.hunger, 0, 1);
+  const lvl = Math.round(fullness * 5);
+  ctx.fillStyle = `hsl(${(fullness * 120).toFixed(0)},85%,55%)`;
+  ctx.fillText("🍽 " + "●".repeat(lvl) + "○".repeat(5 - lvl), cx, ly - 44);
+  ctx.fillStyle = "#fff";
   ctx.fillText("🎂 " + ageInYears(selected.age), cx, ly - 22);
-  ctx.fillText("💚 friends   💛 family", cx, ly);
+  ctx.fillText("💚 friends  💛 family  💢 enemies", cx, ly);
   ctx.textAlign = "left";
 }
 
@@ -1769,6 +1914,11 @@ document.getElementById("bDay").addEventListener("click", (e) => {
   dayMode = DAY_MODES[(DAY_MODES.indexOf(dayMode) + 1) % DAY_MODES.length];
   e.currentTarget.textContent = DAY_ICONS[dayMode];
 });
+// changelog panel: open from the menu bar, close on ✕ or backdrop tap
+const changelogEl = document.getElementById("changelog");
+document.getElementById("bLog").addEventListener("click", () => changelogEl.classList.remove("hidden"));
+document.getElementById("logClose").addEventListener("click", () => changelogEl.classList.add("hidden"));
+changelogEl.addEventListener("click", (e) => { if (e.target === changelogEl) changelogEl.classList.add("hidden"); });
 document.getElementById("bSound").addEventListener("click", (e) => {
   const isOn = Sound.toggle();
   e.target.textContent = isOn ? "🔊" : "🔇";
