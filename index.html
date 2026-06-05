@@ -162,6 +162,14 @@
       <li>An octopus that found treasure gets a <b>gold ring</b> on one of its arms — up to one ring per arm, eight arms total. 💍</li>
     </ul>
 
+    <h3>🦀 Crab colony &amp; glowsticks <span class="date">· Jun 5, 2026</span></h3>
+    <ul>
+      <li>🦀 Crabs now <b>forage for food</b> that settles on the sand — and after eating enough, a crab <b>lays an egg</b>, which wobbles on the sand for about a minute and then <b>cracks open into a baby crab</b>. The 📊 stats track eggs laid and food eaten by crabs.</li>
+      <li>🐢 The turtle is now a proper <b>crab ferry</b>: it holds <b>any number</b> of crabs, and runs a slow cycle where it seeks out a crab to pick up, drifts around, then rises toward the surface so its passengers can parachute off.</li>
+      <li>🐴 During a <b>crab rave</b>, the seahorses become <b>glowsticks</b> and spin in glowing rainbow circles, and any 🪼 jellyfish drifting by <b>blink to the beat</b>. 🌈</li>
+      <li>✨ The 📊 stats now count the <b>shiny lights</b> that bloom near the surface.</li>
+    </ul>
+
     <h3>📊 Tank Stats <span class="date">· Jun 5, 2026</span></h3>
     <ul>
       <li>New 📊 button opens a <b>statistics</b> window with a running tally of the tank: births &amp; deaths, fish eaten by the turtle, food eaten, oldest fish, generations deep, friendships &amp; rivalries, castle visits, bubbles popped, crab raves, parachutes, rides &amp; distance walked, seaweed grown, days passed, and creature sightings.</li>
@@ -451,6 +459,7 @@ function mixHex(c1, c2, t) {
    ========================================================================= */
 const fishes = [];
 const crabs = [];
+const eggs = [];     // crab eggs resting on the sand, waiting to hatch
 const seahorses = [];
 const foods = [];
 const bubbles = [];
@@ -471,6 +480,7 @@ const stats = {
   births: 0, eaten: 0, starved: 0, food: 0, oldest: 0, generations: 1,
   friendships: 0, rivalries: 0, castleVisits: 0, bubblesPopped: 0,
   raves: 0, chutes: 0, crabFeet: 0, rides: 0,
+  eggsLaid: 0, crabFood: 0, shinies: 0,
   whales: 0, jellies: 0, penguins: 0,
   treasures: 0,
 };
@@ -1161,12 +1171,16 @@ class Food {
 /* =========================================================================
    CRAB — scuttles along the sandy floor
    ========================================================================= */
+const CRAB_BIRTH_FOOD = 50;   // bits of food a crab eats before it lays an egg
+const CRAB_GROW_TIME = 60;    // seconds a hatchling takes to reach its adult size
 class Crab {
-  constructor(x) {
+  constructor(x, baby = false) {
     this.x = x; this.dir = pick([-1, 1]);
     this.y = FLOOR() - 6;
     this.hue = rand(0, 30);
-    this.size = rand(0.8, 1.3);
+    this.maxSize = rand(0.8, 1.3);            // the adult size it grows up to
+    this.growT = baby ? 0 : CRAB_GROW_TIME;   // babies start tiny and grow in over ~a minute
+    this.size = this.maxSize * (0.2 + 0.8 * Math.min(1, this.growT / CRAB_GROW_TIME));
     this.legPhase = 0;
     this.pauseTimer = 0;
     this.speed = rand(18, 30);
@@ -1176,8 +1190,14 @@ class Crab {
     this.vx = 0;              // sideways drift while floating
     this.swayT = 0;           // parachute sway phase
     this.coolT = 0;           // seconds it keeps its shades on after a jump
+    this.foodEaten = 0;       // fallen food eaten — enough births a new crab
   }
   update(dt) {
+    // grow from hatchling toward its destined adult size over ~a minute
+    if (this.growT < CRAB_GROW_TIME) {
+      this.growT = Math.min(CRAB_GROW_TIME, this.growT + dt);
+      this.size = this.maxSize * (0.2 + 0.8 * (this.growT / CRAB_GROW_TIME));
+    }
     this.legPhase += dt * (raveActive ? 32 : (this.riding ? 16 : (this.floating ? 7 : 10)));
     if (this.coolT > 0) this.coolT -= dt;
     // --- hitching a ride on the turtle's shell ---
@@ -1188,7 +1208,7 @@ class Crab {
       // during a rave they party right there on the shell (the dance hop is in
       // draw); otherwise they chill until the turtle's high enough, then
       // base-jump off and parachute down to the sand
-      if (!raveActive && t.y < FLOOR() - 150 && Math.random() < 0.012) this.baseJump();
+      if (!raveActive && t.y < H * 0.2 && Math.random() < 0.012) this.baseJump();  // only bail once high up (~80% of the tank below to parachute)
       return;
     }
     // --- parachuting gently back down to the sand ---
@@ -1201,6 +1221,18 @@ class Crab {
     }
     this.y = FLOOR() - 6;
     if (raveActive) return;   // dance in place on the sand during the party
+    // peckish crabs forage for food that has settled on the sand; eat enough
+    // and a brand-new crab is born (see eatFood)
+    const meal = this.nearestFood();
+    if (meal) {
+      this.pauseTimer = 0;
+      this.dir = meal.x >= this.x ? 1 : -1;
+      this.x += this.dir * this.speed * dt;
+      stats.crabFeet += this.speed * dt;
+      if (Math.abs(meal.x - this.x) < 12) this.eatFood(meal);
+      this.x = clamp(this.x, 30, W - 30);
+      return;                 // single-mindedly chase the snack
+    }
     if (this.pauseTimer > 0) { this.pauseTimer -= dt; return; }
     this.x += this.dir * this.speed * dt;
     stats.crabFeet += this.speed * dt;   // tallying the great crab march
@@ -1208,11 +1240,36 @@ class Crab {
     if (Math.random() < 0.003) this.dir *= -1;
     if (this.x < 30) this.dir = 1;
     if (this.x > W - 30) this.dir = -1;
-    // climb aboard if the turtle is cruising low and nearby
-    if (turtle && turtle.y > FLOOR() - 80 && turtle.riders < 5 &&
+    // climb aboard if the turtle is cruising low and nearby (no rider limit —
+    // the turtle happily carries any number of crabs)
+    if (turtle && turtle.y > FLOOR() - 80 &&
         Math.abs(turtle.x - this.x) < turtle.sw * 0.8 && Math.random() < 0.03) {
       this.mount(turtle);
     }
+  }
+  // the nearest bit of food resting on the sand within scuttling range
+  nearestFood() {
+    let best = null, bd = 170;
+    for (const f of foods) {
+      if (f.dead || f.y < FLOOR() - 36) continue;   // only food down on the floor
+      const d = Math.abs(f.x - this.x);
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best;
+  }
+  eatFood(f) {
+    if (f.dead) return;
+    f.eat();
+    stats.crabFood++;
+    this.foodEaten++;
+    if (this.foodEaten >= CRAB_BIRTH_FOOD) { this.foodEaten = 0; this.layEgg(); }
+  }
+  layEgg() {
+    if (crabs.length + eggs.length >= 100) return;   // don't overfill the tank
+    eggs.push(new CrabEgg(clamp(this.x, 24, W - 24), this.hue));
+    stats.eggsLaid++;
+    spawnEmoji(this.x, this.y - 16, 1, "🥚");
+    Sound.plop();
   }
   mount(t) {
     this.riding = t;
@@ -1313,6 +1370,69 @@ class Crab {
 }
 
 /* =========================================================================
+   CRAB EGG — laid on the sand when a crab eats its fill; wobbles for about a
+   minute, grows a crack, then hatches into a small crab
+   ========================================================================= */
+class CrabEgg {
+  constructor(x, hue) {
+    this.x = x;
+    this.y = FLOOR() - 5;
+    this.hue = hue;                 // inherits the parent crab's shell colour
+    this.size = rand(0.75, 0.95);
+    this.t = 0;
+    this.life = rand(52, 68);       // ~a minute resting on the sand
+    this.done = false;              // set once it has hatched
+  }
+  update(dt) {
+    this.t += dt;
+    if (this.t >= this.life) { this.hatch(); this.done = true; }
+  }
+  hatch() {
+    if (crabs.length < 100) {
+      crabs.push(new Crab(this.x, true));   // a hatchling — starts small and grows up
+    }
+    spawnEmoji(this.x, this.y - 14, 1, "🦀");
+    spawnHearts(this.x, this.y - 8, 3, 200);
+    Sound.chirp();
+  }
+  draw() {
+    const s = 11 * this.size;
+    const prog = clamp(this.t / this.life, 0, 1);
+    // a gentle wobble that quickens and widens as hatching nears
+    const wob = Math.sin(this.t * (3 + prog * 18)) * (0.04 + prog * 0.16);
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(wob);
+    // pale speckled shell, tinted by the parent's hue
+    const g = ctx.createLinearGradient(0, -s * 1.6, 0, s * 0.2);
+    g.addColorStop(0, hsl(this.hue, 45, 90));
+    g.addColorStop(1, hsl(this.hue, 40, 70));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0, -s * 0.7, s * 0.72, s, 0, 0, TAU);
+    ctx.fill();
+    // a few freckles
+    ctx.fillStyle = hsl(this.hue, 45, 45, 0.45);
+    for (const [dx, dy] of [[-0.28, -0.9], [0.3, -1.2], [0.05, -0.5], [-0.1, -1.4]]) {
+      ctx.beginPath(); ctx.arc(dx * s, dy * s, s * 0.1, 0, TAU); ctx.fill();
+    }
+    // a crack that creeps across the shell in the final stretch
+    if (prog > 0.7) {
+      const c = (prog - 0.7) / 0.3;
+      ctx.strokeStyle = hsl(this.hue, 30, 30, 0.85);
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.6, -s * 0.7);
+      ctx.lineTo(-s * 0.2, -s * 0.7 - s * 0.28 * c);
+      ctx.lineTo(s * 0.12, -s * 0.7 + s * 0.12 * c);
+      ctx.lineTo(s * 0.55, -s * 0.7 - s * 0.22 * c);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
    SEAHORSE — bobs gently up and down
    ========================================================================= */
 class Seahorse {
@@ -1324,9 +1444,13 @@ class Seahorse {
     this.dir = pick([-1, 1]);
     this.baseY = this.y;
     this.targetY = this.y;      // the depth it's gently drifting toward
+    this.spin = rand(0, TAU);   // glowstick twirl angle, only used during a rave
+    this.spinDir = pick([-1, 1]);
   }
   update(dt) {
     this.t += dt * 2;
+    // during a crab rave the seahorses become glowsticks and whirl around
+    if (raveActive) this.spin += this.spinDir * dt * 7;
     this.x += this.dir * 8 * dt;
     if (Math.random() < 0.004) this.dir *= -1;
     if (this.x < 40) this.dir = 1;
@@ -1339,11 +1463,19 @@ class Seahorse {
   }
   draw() {
     const s = 22 * this.size;
+    // glowstick mode: spin in place with a bright rainbow body and a neon halo
+    const partying = raveActive;
+    const hue = partying ? (this.spin * 90 + this.x) % 360 : this.hue;
     ctx.save();
     ctx.translate(this.x, this.y);
+    if (partying) {
+      ctx.rotate(this.spin);
+      ctx.shadowColor = hsl(hue, 90, 60);
+      ctx.shadowBlur = s * 0.9;
+    }
     ctx.scale(this.dir, 1);
-    ctx.fillStyle = hsl(this.hue, 70, 60);
-    ctx.strokeStyle = hsl(this.hue, 70, 45);
+    ctx.fillStyle = hsl(hue, partying ? 95 : 70, partying ? 65 : 60);
+    ctx.strokeStyle = hsl(hue, partying ? 95 : 70, partying ? 55 : 45);
     ctx.lineWidth = s * 0.5;
     ctx.lineCap = "round";
     // curvy body
@@ -1389,9 +1521,14 @@ class Turtle {
     this.friends = new Set();
     this.enemies = new Set();
     this.parents = [];                 // never breeds — keeps bloodline() happy
-    this.riders = 0;                   // crabs currently on the shell
+    this.riders = 0;                   // crabs currently on the shell (any number)
     this.chompT = 0;                   // >0 briefly while its jaws snap shut
     this.grudge = new Map();           // enemy id → seconds before it'll bite it
+    // slow "crab ferry" cycle: wander → fetch a crab → cruise → rise so its
+    // passengers can parachute off, then back to wander
+    this.mood = "wander";
+    this.moodTimer = rand(10, 18);
+    this.targetCrab = null;
     fishById.set(this.id, this);
   }
 
@@ -1407,9 +1544,17 @@ class Turtle {
       if (t - dt <= 0) this.grudge.delete(id); else this.grudge.set(id, t - dt);
     }
 
-    // count crabs riding right now (for the climb-aboard cap)
+    // count crabs riding right now
     this.riders = 0;
     for (const c of crabs) if (c.riding === this) this.riders++;
+
+    // advance the slow ferry cycle
+    this.moodTimer -= dt;
+    if (this.targetCrab && this.targetCrab.riding === this) {
+      // got our passenger aboard — settle into a cruise before surfacing
+      this.mood = "cruise"; this.targetCrab = null; this.moodTimer = rand(8, 16);
+    }
+    if (this.moodTimer <= 0) this.nextMood();
 
     let ax = 0, ay = 0;
 
@@ -1418,6 +1563,22 @@ class Turtle {
     if (this.thinkTimer <= 0) { this.thinkTimer = rand(1.5, 4); this.wanderAng += rand(-0.7, 0.7); }
     ax += Math.cos(this.wanderAng) * 0.5;
     ay += Math.sin(this.wanderAng) * 0.25;
+
+    // the ferry cycle gives the wander some intent: dive for a target crab,
+    // then later rise toward the surface so riders can base-jump off
+    if (this.mood === "fetch") {
+      const c = this.targetCrab;
+      if (c && crabs.includes(c) && !c.riding && !c.floating) {
+        const d = dist(this.x, this.y, c.x, c.y) || 1;
+        ax += ((c.x - this.x) / d) * 1.5;
+        ay += (FLOOR() - 18 - this.y) * 0.02;   // drop down to crab level
+      } else {
+        this.targetCrab = null;                 // crab gone — give up the hunt
+        this.mood = "wander"; this.moodTimer = rand(8, 14);
+      }
+    } else if (this.mood === "ascend") {
+      ay += (H * 0.18 - this.y) * 0.03;          // climb high so riders can chute
+    }
 
     // drift toward friends; stalk the nearest enemy so collisions actually happen
     let prey = null, pd = Infinity;
@@ -1442,7 +1603,7 @@ class Turtle {
 
     this.vx += ax * dt; this.vy += ay * dt;
     const v = Math.hypot(this.vx, this.vy) || 1;
-    const max = prey ? 1.1 : 0.85;
+    const max = (prey || this.mood === "fetch") ? 1.1 : 0.85;
     if (v > max) { this.vx = (this.vx / v) * max; this.vy = (this.vy / v) * max; }
     this.vy *= 0.99;
 
@@ -1470,6 +1631,34 @@ class Turtle {
     }
 
     this.socialize();
+  }
+
+  // pick the next stage of the slow ferry cycle
+  nextMood() {
+    if (this.mood === "wander") {
+      const c = this.nearestSandCrab();
+      if (c) { this.mood = "fetch"; this.targetCrab = c; this.moodTimer = rand(10, 16); }
+      else { this.moodTimer = rand(6, 12); }     // nobody to fetch — keep wandering
+    } else if (this.mood === "fetch") {
+      this.mood = "cruise"; this.targetCrab = null; this.moodTimer = rand(8, 16);
+    } else if (this.mood === "cruise") {
+      // carrying anyone? rise up so they can parachute; otherwise wander
+      this.mood = this.riders > 0 ? "ascend" : "wander";
+      this.moodTimer = rand(8, 14);
+    } else {                                       // ascend → back to wandering
+      this.mood = "wander"; this.moodTimer = rand(10, 18);
+    }
+  }
+
+  // the closest crab scuttling on the sand (not already riding or parachuting)
+  nearestSandCrab() {
+    let best = null, bd = Infinity;
+    for (const c of crabs) {
+      if (c.riding || c.floating) continue;
+      const d = dist(this.x, this.y, c.x, c.y);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
   }
 
   socialize() {
@@ -2045,7 +2234,10 @@ let lureTimer = rand(6, 14);
 function updateLure(dt) {
   if (!lure) {
     lureTimer -= dt;
-    if (lureTimer <= 0) lure = { x: rand(W * 0.15, W * 0.85), y: rand(H * 0.08, H * 0.2), t: 0, life: rand(12, 22), fade: 0 };
+    if (lureTimer <= 0) {
+      lure = { x: rand(W * 0.15, W * 0.85), y: rand(H * 0.08, H * 0.2), t: 0, life: rand(12, 22), fade: 0 };
+      stats.shinies++;   // tally each shiny light that blooms near the surface
+    }
     return;
   }
   lure.t += dt;
@@ -2141,16 +2333,22 @@ class Jellyfish {
   draw() {
     const s = 26 * this.size;
     const squish = 1 + Math.sin(this.t) * 0.15;
+    // during a crab rave the jellyfish blinks rainbow in time with the beat
+    const partying = raveActive;
+    const beat = partying ? (1 - (raveT % (RAVE_8TH * 2)) / (RAVE_8TH * 2)) : 0;
+    const hue = partying ? (raveT * 160 + this.x) % 360 : this.hue;
+    const light = partying ? 55 + 35 * beat : 65;
     ctx.save();
     ctx.translate(this.x, this.y);
-    ctx.fillStyle = hsl(this.hue, 70, 65, 0.7);
+    if (partying) { ctx.shadowColor = hsl(hue, 95, 60); ctx.shadowBlur = s * (0.4 + beat * 0.9); }
+    ctx.fillStyle = hsl(hue, partying ? 90 : 70, light, 0.78);
     ctx.beginPath();
     ctx.ellipse(0, 0, s, s * squish, 0, Math.PI, TAU);
     ctx.fill();
     ctx.beginPath();
     ctx.ellipse(0, 0, s, s * 0.4, 0, 0, Math.PI);
     ctx.fill();
-    ctx.strokeStyle = hsl(this.hue, 70, 75, 0.6);
+    ctx.strokeStyle = hsl(hue, partying ? 90 : 70, partying ? light + 12 : 75, 0.6);
     ctx.lineWidth = 2;
     for (let i = -2; i <= 2; i++) {
       ctx.beginPath();
@@ -2743,6 +2941,8 @@ function frame(now) {
   fishes.forEach(f => f.update(dt));
   if (turtle) turtle.update(dt);             // may mark an enemy fish as eaten
   crabs.forEach(c => c.update(dt));
+  eggs.forEach(e => e.update(dt));           // crab eggs wobble in place, then hatch
+  for (let i = eggs.length - 1; i >= 0; i--) if (eggs[i].done) eggs.splice(i, 1);
   seahorses.forEach(s => s.update(dt));
   // clear out fish that died this frame (starvation bursts into food; eaten ones don't)
   for (let i = fishes.length - 1; i >= 0; i--) if (fishes[i].dead) removeFishAt(i);
@@ -2784,6 +2984,7 @@ function frame(now) {
   seahorses.forEach(s => s.draw());
   if (turtle) turtle.draw();                  // the turtle drifts among the fish
   fishes.forEach(f => f.draw());
+  eggs.forEach(e => e.draw());                // eggs nestled on the sand, under the crabs
   crabs.forEach(c => c.draw());               // crabs (incl. shell riders) on top
   drawDecorFront();
   drawNightVeil();                            // dim the whole scene after dark
@@ -2878,6 +3079,8 @@ const STAT_GROUPS = [
     { label: "💢 Rivalries formed", get: () => stats.rivalries },
   ] },
   { tab: "🦀", title: "Crabs", rows: [
+    { label: "🥚 Eggs laid", get: () => stats.eggsLaid },
+    { label: "🍤 Food eaten by crabs", get: () => stats.crabFood },
     { label: "🎉 Crab raves", get: () => stats.raves },
     { label: "🪂 Crab parachutes", get: () => stats.chutes },
     { label: "🐢 Crab rides on the turtle", get: () => stats.rides },
@@ -2887,6 +3090,7 @@ const STAT_GROUPS = [
     { label: "🏰 Castle visits", get: () => stats.castleVisits },
     { label: "💰 Treasures found", get: () => stats.treasures },
     { label: "🫧 Bubbles popped", get: () => stats.bubblesPopped },
+    { label: "✨ Shiny lights appeared", get: () => stats.shinies },
     { label: "🌱 Total seaweed length", get: () => (totalSeaweed() / PX_PER_FT).toFixed(1) + " ft" },
     { label: "🌗 Days passed", get: () => Math.floor(tankClock / DAY_PERIOD) },
     { label: "👀 Visitors seen", get: () => `🐋 ${stats.whales}  🪼 ${stats.jellies}  🐧 ${stats.penguins}` },
