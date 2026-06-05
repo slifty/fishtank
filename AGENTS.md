@@ -56,6 +56,12 @@ Reading top to bottom, the file is laid out as:
      loop's removal pass calls `removeFishAt()`, which scrubs its id from every
      friends/enemies set and `fishById`. Starved fish burst into `Food`; fish
      eaten by the turtle just vanish.
+   - **Stats**: a session-only `stats` object holds running tallies; bump it at
+     the event site (e.g. `stats.births++` in `haveBaby`). The 📊 panel is
+     data-driven by `STAT_ROWS` (label + `get()`), rendered by `renderStats()`
+     and refreshed each frame while open. Derived rows (crab miles, seaweed
+     length) compute in `get()` rather than from a counter. To add a stat: add a
+     field, bump it, add a `STAT_ROWS` row.
    - **Day/night**: `tankClock`, `daylight`, `dayMode` (`"cycle" | "day" |
      "night"`), `DAY_PERIOD`, `drawBackground()`, `drawNightVeil()`.
    - **Interaction/hit-testing**: `tankXY(e)` maps a pointer event to tank

@@ -73,8 +73,8 @@
   .swim { display: inline-block; animation: bob 2s ease-in-out infinite; }
   @keyframes bob { 0%,100% { transform: translateY(0) rotate(-3deg);} 50% { transform: translateY(-14px) rotate(3deg);} }
 
-  /* Changelog ("what's new") panel, opened from the menu bar. */
-  #changelog {
+  /* Modal panels (changelog "what's new" + statistics), opened from the menu bar. */
+  #changelog, #stats {
     position: fixed; inset: 0; z-index: 20;
     display: flex; align-items: center; justify-content: center;
     background: rgba(2,12,22,0.55);
@@ -84,8 +84,9 @@
   /* Kill pointer events on the card too — otherwise the invisible, faded-out
      card keeps eating clicks in the centre of the tank (its explicit
      pointer-events:auto isn't overridden by the backdrop's :none). */
-  #changelog.hidden, #changelog.hidden .card { pointer-events: none; opacity: 0; }
-  #changelog .card {
+  #changelog.hidden, #changelog.hidden .card,
+  #stats.hidden, #stats.hidden .card { pointer-events: none; opacity: 0; }
+  #changelog .card, #stats .card {
     pointer-events: auto;
     width: min(560px, 88vw); max-height: 78vh; overflow-y: auto;
     background: rgba(8,28,44,0.97); color: #eaf6ff;
@@ -94,17 +95,42 @@
     -webkit-overflow-scrolling: touch;
     font-family: -apple-system, "Segoe UI", sans-serif;
   }
-  #changelog .close {
+  #changelog .close, #stats .close {
     position: sticky; top: 0; float: right; margin: -4px -8px 0 0;
     border: none; background: rgba(255,255,255,0.16); color: #fff;
     width: 36px; height: 36px; border-radius: 50%; font-size: 20px; cursor: pointer;
   }
-  #changelog h2 { margin: 0 0 2px; font-size: 26px; }
-  #changelog .sub { margin: 0 0 14px; color: rgba(220,240,255,0.55); font-size: 14px; }
+  #changelog h2, #stats h2 { margin: 0 0 2px; font-size: 26px; }
+  #changelog .sub, #stats .sub { margin: 0 0 14px; color: rgba(220,240,255,0.55); font-size: 14px; }
   #changelog h3 { margin: 18px 0 4px; font-size: 16px; color: #9fe0ff; }
   #changelog .date { color: rgba(220,240,255,0.45); font-size: 13px; font-weight: normal; }
   #changelog ul { margin: 0; padding-left: 20px; line-height: 1.5; }
   #changelog li { margin: 3px 0; }
+  /* Statistics tabs: a row of grouped sections. */
+  #stats .tabs { display: flex; gap: 6px; margin: 6px 0 4px; }
+  #stats .tab {
+    flex: 1 1 0; min-width: 0; cursor: pointer; border: none;
+    background: rgba(255,255,255,0.07); color: rgba(220,240,255,0.7);
+    border-radius: 12px; padding: 8px 4px; font-family: inherit;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  #stats .tab .ico { font-size: 22px; line-height: 1; }
+  #stats .tab .lbl { font-size: 12px; }
+  #stats .tab.active {
+    background: rgba(120,200,255,0.22); color: #eaf6ff;
+    box-shadow: inset 0 0 0 1.5px rgba(150,210,255,0.5);
+  }
+  /* Statistics rows: a label on the left, a big number on the right. The list
+     reserves the height of the tallest tab so switching tabs doesn't resize
+     (and re-centre) the modal. Bump min-height if a group grows past 6 rows. */
+  #stats .statlist { list-style: none; margin: 6px 0 0; padding: 0; min-height: 270px; }
+  #stats .statlist li {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 44px; padding: 0 2px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-size: 17px;
+  }
+  #stats .statlist b { font-size: 22px; color: #9fe0ff; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -118,6 +144,7 @@
   <button class="btn" id="bPlant" title="Plant seaweed">🌱</button>
   <button class="btn" id="bDay" title="Day / night: cycle, always day, always night">🌗</button>
   <button class="btn" id="bLog" title="What's new">📜</button>
+  <button class="btn" id="bStats" title="Tank statistics">📊</button>
   <button class="btn" id="bSound" title="Sound on/off">🔇</button>
 </div>
 <div id="hint"><span class="swim">🐠</span> tap the water to feed the fish</div>
@@ -127,6 +154,12 @@
     <button class="close" id="logClose" title="Close">✕</button>
     <h2>🐠 What's New</h2>
     <p class="sub">A little aquarium that keeps growing.</p>
+
+    <h3>📊 Tank Stats <span class="date">· Jun 5, 2026</span></h3>
+    <ul>
+      <li>New 📊 button opens a <b>statistics</b> window with a running tally of the tank: births &amp; deaths, fish eaten by the turtle, food eaten, oldest fish, generations deep, friendships &amp; rivalries, castle visits, bubbles popped, crab raves, parachutes, rides &amp; distance walked, seaweed grown, days passed, and creature sightings.</li>
+      <li>Tapping a fish or the turtle now shows the <b>counts</b> of its friends, family and enemies in colored badges — hover one to see what it means.</li>
+    </ul>
 
     <h3>🐢 Death and turtles <span class="date">· Jun 5, 2026</span></h3>
     <ul>
@@ -180,6 +213,16 @@
     <ul>
       <li>Fish, octopuses, crabs, seahorses, castles, bubbles, and surprise whales &amp; jellyfish.</li>
     </ul>
+  </div>
+</div>
+
+<div id="stats" class="hidden">
+  <div class="card">
+    <button class="close" id="statsClose" title="Close">✕</button>
+    <h2>📊 Tank Stats</h2>
+    <p class="sub">A running tally of life in the tank, this visit.</p>
+    <div class="tabs" id="statTabs"></div>
+    <ul class="statlist" id="statList"></ul>
   </div>
 </div>
 
@@ -403,6 +446,15 @@ const fishById = new Map();  // id -> fish (and the turtle), for relationships
 let nextId = 1;
 let turtle = null;   // the one sea turtle — seeded at startup, never removed
 
+// session-only running tallies, shown in the 📊 Statistics window. crabFeet is
+// raw pixels walked, converted to feet/miles for display (see PX_PER_FT).
+const stats = {
+  births: 0, eaten: 0, starved: 0, food: 0, oldest: 0, generations: 1,
+  friendships: 0, rivalries: 0, castleVisits: 0, bubblesPopped: 0,
+  raves: 0, chutes: 0, crabFeet: 0, rides: 0,
+  whales: 0, jellies: 0, penguins: 0,
+};
+
 const FLOOR = () => H - 46;   // sandy bottom line
 
 /* =========================================================================
@@ -443,6 +495,7 @@ class Fish {
     this.dead = false;             // removed from the tank this frame
     this.starved = false;          // died of hunger → bursts into a puff of food
     this.eatenT = 0;               // >0 while the turtle is gulping it down
+    this.gen = 1;                  // generation: founders are 1, babies parent+1
   }
 
   get len() {
@@ -497,6 +550,7 @@ class Fish {
     }
 
     this.age += dt;
+    if (this.age > stats.oldest) stats.oldest = this.age;   // record the eldest yet
     this.wobble += dt * 8 * this.genes.speed;
     this.hunger = Math.min(1, this.hunger + dt * 0.012); // slowly gets peckish
     // starves at full hunger — bursts into a puff of food for the others
@@ -524,6 +578,7 @@ class Fish {
       ay += ((food.y - this.y) / d) * 2.2;
       if (d < this.len * 0.5 && !food.dead) {
         food.eat();
+        stats.food++;
         this.fed = Math.min(1.6, this.fed + 0.015); // a little bigger each meal
         this.hunger = Math.max(0, this.hunger - 0.45); // and nicely full again
         this.provokeEnemies();                          // hungry onlookers get jealous
@@ -538,6 +593,7 @@ class Fish {
         // go inside!
         this.inside = true;
         this.visiting = false;
+        stats.castleVisits++;
         this.hideTimer = rand(2.5, 7);
         this.targetCastle.occupants++;
         spawnHearts(door.x, door.y, 1, 60);
@@ -651,6 +707,7 @@ class Fish {
             Math.random() < 0.05 * this.genes.sociable * other.genes.sociable) {
           this.friends.add(other.id);
           other.friends.add(this.id);
+          stats.friendships++;
           spawnHearts((this.x + other.x) / 2, (this.y + other.y) / 2, 3, 200);
           Sound.chirp();
         }
@@ -688,6 +745,7 @@ class Fish {
     // a falling out ends any friendship between them
     this.friends.delete(other.id); other.friends.delete(this.id);
     this.enemies.add(other.id); other.enemies.add(this.id);
+    stats.rivalries++;
     spawnEmoji((this.x + other.x) / 2, (this.y + other.y) / 2, 2, "💢");
     Sound.grumble();
   }
@@ -699,7 +757,10 @@ class Fish {
     const by = (this.y + other.y) / 2;
     const baby = new Fish(bx, by, breed(this.genes, other.genes), true);
     baby.parents = [this.id, other.id];
+    baby.gen = Math.max(this.gen, other.gen) + 1;
     fishes.push(baby);
+    stats.births++;
+    if (baby.gen > stats.generations) stats.generations = baby.gen;
     spawnHearts(bx, by, 8, 360);
     Sound.baby();
   }
@@ -1054,6 +1115,7 @@ class Crab {
     if (raveActive) return;   // dance in place on the sand during the party
     if (this.pauseTimer > 0) { this.pauseTimer -= dt; return; }
     this.x += this.dir * this.speed * dt;
+    stats.crabFeet += this.speed * dt;   // tallying the great crab march
     if (Math.random() < 0.004) this.pauseTimer = rand(0.5, 2);
     if (Math.random() < 0.003) this.dir *= -1;
     if (this.x < 30) this.dir = 1;
@@ -1067,6 +1129,7 @@ class Crab {
   mount(t) {
     this.riding = t;
     this.rideOff = rand(-t.sw * 0.4, t.sw * 0.4);
+    stats.rides++;
     spawnEmoji(this.x, this.y - 12, 1, "🦀");
   }
   baseJump() {
@@ -1075,6 +1138,7 @@ class Crab {
     this.swayT = rand(0, TAU);
     this.vx = rand(-16, 16);
     this.coolT = 7;                 // rocks the shades through the descent + a strut
+    stats.chutes++;
     Sound.plop();
     spawnEmoji(this.x, this.y - 16, 1, "😎");
   }
@@ -1310,6 +1374,7 @@ class Turtle {
       if (dist(this.x, this.y, f.x, f.y) < this.sw * 0.85 + f.len * 0.3 && Math.random() < 0.06) {
         f.eatenT = 0.4;                 // start the gulp animation (dies when it ends)
         this.enemies.delete(f.id);      // stop chasing — it's a goner
+        stats.eaten++;
         this.chompT = 0.4;              // snap the jaws shut
         chomps.push(new Chomp(f.x, f.y));
         Sound.chomp();
@@ -1335,6 +1400,7 @@ class Turtle {
 
   befriend(f) {
     this.friends.add(f.id); f.friends.add(this.id);
+    stats.friendships++;
     spawnHearts((this.x + f.x) / 2, (this.y + f.y) / 2, 3, 200);
     Sound.chirp();
   }
@@ -1343,6 +1409,7 @@ class Turtle {
     this.friends.delete(f.id); f.friends.delete(this.id);
     this.enemies.add(f.id); f.enemies.add(this.id);
     this.grudge.set(f.id, 2.5);   // glare for 2.5s before it'll consider biting
+    stats.rivalries++;
     spawnEmoji((this.x + f.x) / 2, (this.y + f.y) / 2, 2, "💢");
     Sound.grumble();
   }
@@ -1903,18 +1970,20 @@ class Penguin {
 
 function triggerSurprise() {
   const what = pick(["whale", "jelly", "jelly", "penguin", "penguin", "babyboom"]);
-  if (what === "whale") { visitors.push(new Whale()); Sound.surprise(); }
+  if (what === "whale") { visitors.push(new Whale()); stats.whales++; Sound.surprise(); }
   else if (what === "jelly") {
     for (let i = 0; i < randInt(2, 4); i++) visitors.push(new Jellyfish());
+    stats.jellies++;
     Sound.chirp();
   } else if (what === "penguin") {
     visitors.push(new Penguin());
+    stats.penguins++;
     Sound.chirp();
   } else if (what === "babyboom" && fishes.length >= 2 && fishes.length < 50) {
     // a friendly pair somewhere has a surprise baby
     Sound.baby();
     const a = pick(fishes), b = pick(fishes);
-    if (a !== b) { const baby = new Fish((a.x+b.x)/2,(a.y+b.y)/2, breed(a.genes,b.genes), true); baby.parents = [a.id, b.id]; fishes.push(baby); spawnHearts(baby.x, baby.y, 6, 300); }
+    if (a !== b) { const baby = new Fish((a.x+b.x)/2,(a.y+b.y)/2, breed(a.genes,b.genes), true); baby.parents = [a.id, b.id]; baby.gen = Math.max(a.gen, b.gen) + 1; fishes.push(baby); stats.births++; if (baby.gen > stats.generations) stats.generations = baby.gen; spawnHearts(baby.x, baby.y, 6, 300); }
   }
 }
 
@@ -2084,6 +2153,7 @@ function feedAt(x, y) {
 function removeFishAt(i) {
   const f = fishes[i];
   if (f.starved) {
+    stats.starved++;
     for (let k = 0; k < 5; k++) foods.push(new Food(f.x + rand(-14, 14), f.y + rand(-10, 10)));
     for (let k = 0; k < 5; k++) bubbles.push(new Bubble(f.x + rand(-10, 10), f.y + rand(-6, 6)));
     spawnEmoji(f.x, f.y, 3, "💥");
@@ -2256,7 +2326,38 @@ function drawHoverHighlights() {
     ctx.fillStyle = "#fff";
   }
   ctx.fillText("🎂 " + ageInYears(selected.age), cx, ly - 22);
-  ctx.fillText(sg ? "💚 friends  💛 family  💢 enemies" : "💚 friends  💢 enemies", cx, ly);
+  // relationship counts, each in a little coloured info-badge that matches the
+  // rings. Hovering a badge explains it (e.g. "3 friends").
+  const badges = [{ c: FRIEND, n: friendIds.size, one: "friend", many: "friends" }];
+  if (sg) badges.push({ c: FAMILY, n: relativeIds.size, one: "relative", many: "relatives" });
+  badges.push({ c: ENEMY, n: enemyIds.size, one: "enemy", many: "enemies" });
+  const br = 14, bstep = br * 2 + 12;
+  let bxx = cx - (badges.length - 1) * bstep / 2;
+  ctx.textBaseline = "middle";
+  ctx.font = "bold 15px -apple-system, sans-serif";
+  let hovered = null;
+  for (const b of badges) {
+    ctx.fillStyle = b.c;
+    ctx.beginPath(); ctx.arc(bxx, ly, br, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#0c1c28";
+    ctx.fillText(String(b.n), bxx, ly + 1);
+    if (pointer.active && dist(pointer.x, pointer.y, bxx, ly) <= br + 2) { hovered = b; b.cx = bxx; }
+    bxx += bstep;
+  }
+  // a tooltip describing the badge under the cursor
+  if (hovered) {
+    const txt = `${hovered.n} ${hovered.n === 1 ? hovered.one : hovered.many}`;
+    ctx.font = "14px -apple-system, sans-serif";
+    const tw = ctx.measureText(txt).width + 18, th = 24;
+    const tx = clamp(hovered.cx, tw / 2 + 4, W - tw / 2 - 4), ty = ly + br + 6;
+    ctx.fillStyle = "rgba(6,16,24,0.95)";
+    ctx.beginPath(); ctx.roundRect(tx - tw / 2, ty, tw, th, 7); ctx.fill();
+    ctx.strokeStyle = hovered.c; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.textAlign = "center";
+    ctx.fillText(txt, tx, ty + th / 2 + 1);
+  }
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "#fff";
   ctx.textAlign = "left";
 }
 
@@ -2310,7 +2411,7 @@ function pokeCrab(c) {
 
 function startRave() {
   rave = RAVE_LEN;                 // (re)start or extend the party
-  if (!raveActive) { raveActive = true; raveT = 0; raveStep = -1; }
+  if (!raveActive) { raveActive = true; raveT = 0; raveStep = -1; stats.raves++; }  // count fresh parties only
   crabCombo = 0;
   spawnEmoji(W / 2, H * 0.4, 8, "🦀");
 }
@@ -2396,7 +2497,7 @@ function frame(now) {
   for (let i = fishes.length - 1; i >= 0; i--) if (fishes[i].dead) removeFishAt(i);
   foods.forEach(f => f.update(dt));
   for (let i = foods.length - 1; i >= 0; i--) if (foods[i].dead) foods.splice(i, 1);
-  for (let i = bubbles.length - 1; i >= 0; i--) if (!bubbles[i].update(dt)) bubbles.splice(i, 1);
+  for (let i = bubbles.length - 1; i >= 0; i--) if (!bubbles[i].update(dt)) { bubbles.splice(i, 1); stats.bubblesPopped++; }  // popped at the surface
   for (let i = hearts.length - 1; i >= 0; i--) if (!hearts[i].update(dt)) hearts.splice(i, 1);
   for (let i = chomps.length - 1; i >= 0; i--) if (!chomps[i].update(dt)) chomps.splice(i, 1);
   for (let i = visitors.length - 1; i >= 0; i--) if (!visitors[i].update(dt)) visitors.splice(i, 1);
@@ -2442,6 +2543,9 @@ function frame(now) {
 
   document.getElementById("count").textContent =
     `🐟 ${fishes.length}   🦀 ${crabs.length}   🐴 ${seahorses.length}   🐢 ${turtle ? 1 : 0}`;
+
+  // keep the stats panel live while it's open
+  if (!statsEl.classList.contains("hidden")) renderStats();
 
   requestAnimationFrame(frame);
 }
@@ -2492,6 +2596,81 @@ const changelogEl = document.getElementById("changelog");
 document.getElementById("bLog").addEventListener("click", () => changelogEl.classList.remove("hidden"));
 document.getElementById("logClose").addEventListener("click", () => changelogEl.classList.add("hidden"));
 changelogEl.addEventListener("click", (e) => { if (e.target === changelogEl) changelogEl.classList.add("hidden"); });
+
+/* statistics panel — a live, session-only tally. Lengths are scaled to the
+   tank: ~60px ≈ 1 foot, so a grown fish is roughly a foot and the seaweed a
+   few feet (and 5280ft = 1 mile, for the great crab march). */
+const PX_PER_FT = 60;
+const totalSeaweed = () => decorations.reduce((s, d) => s + (d instanceof Plant ? d.h : 0), 0);
+const fmtDistance = (px) => {
+  const ft = px / PX_PER_FT;
+  return ft >= 5280 ? (ft / 5280).toFixed(2) + " mi" : Math.round(ft).toLocaleString() + " ft";
+};
+// stats are grouped into tabs so the long list stays browsable
+const STAT_GROUPS = [
+  { tab: "🐟", title: "Fish", rows: [
+    { label: "🐣 Fish born", get: () => stats.births },
+    { label: "🍤 Food eaten by fish", get: () => stats.food },
+    { label: "🎂 Oldest fish", get: () => ageInYears(stats.oldest) },
+    { label: "👨‍👩‍👧 Generations deep", get: () => stats.generations },
+    { label: "💀 Fish lost to hunger", get: () => stats.starved },
+    { label: "🍽️ Fish eaten by the turtle", get: () => stats.eaten },
+  ] },
+  { tab: "💞", title: "Bonds", rows: [
+    { label: "💚 Friendships formed", get: () => stats.friendships },
+    { label: "💢 Rivalries formed", get: () => stats.rivalries },
+  ] },
+  { tab: "🦀", title: "Crabs", rows: [
+    { label: "🎉 Crab raves", get: () => stats.raves },
+    { label: "🪂 Crab parachutes", get: () => stats.chutes },
+    { label: "🐢 Crab rides on the turtle", get: () => stats.rides },
+    { label: "🚶 Crab distance walked", get: () => fmtDistance(stats.crabFeet) },
+  ] },
+  { tab: "🌊", title: "Tank", rows: [
+    { label: "🏰 Castle visits", get: () => stats.castleVisits },
+    { label: "🫧 Bubbles popped", get: () => stats.bubblesPopped },
+    { label: "🌱 Total seaweed length", get: () => (totalSeaweed() / PX_PER_FT).toFixed(1) + " ft" },
+    { label: "🌗 Days passed", get: () => Math.floor(tankClock / DAY_PERIOD) },
+    { label: "👀 Visitors seen", get: () => `🐋 ${stats.whales}  🪼 ${stats.jellies}  🐧 ${stats.penguins}` },
+  ] },
+];
+const statsEl = document.getElementById("stats");
+const statTabsEl = document.getElementById("statTabs");
+const statListEl = document.getElementById("statList");
+let statTab = 0;          // which group is showing
+let statValEls = [];      // the <b> value cells for the active group
+
+// build the row <li>s for the active group, capturing their value cells
+function buildStatList() {
+  statListEl.innerHTML = "";
+  statValEls = STAT_GROUPS[statTab].rows.map((row) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span"); name.textContent = row.label;
+    const val = document.createElement("b");
+    li.append(name, val);
+    statListEl.appendChild(li);
+    return val;
+  });
+}
+function renderStats() {
+  STAT_GROUPS[statTab].rows.forEach((row, i) => { statValEls[i].textContent = row.get(); });
+}
+// one tab button per group
+STAT_GROUPS.forEach((g, i) => {
+  const b = document.createElement("button");
+  b.className = "tab" + (i === 0 ? " active" : "");
+  b.innerHTML = `<span class="ico">${g.tab}</span><span class="lbl">${g.title}</span>`;
+  b.addEventListener("click", () => {
+    statTab = i;
+    statTabsEl.querySelectorAll(".tab").forEach((t, j) => t.classList.toggle("active", j === i));
+    buildStatList(); renderStats();
+  });
+  statTabsEl.appendChild(b);
+});
+buildStatList();
+document.getElementById("bStats").addEventListener("click", () => { renderStats(); statsEl.classList.remove("hidden"); });
+document.getElementById("statsClose").addEventListener("click", () => statsEl.classList.add("hidden"));
+statsEl.addEventListener("click", (e) => { if (e.target === statsEl) statsEl.classList.add("hidden"); });
 document.getElementById("bSound").addEventListener("click", (e) => {
   const isOn = Sound.toggle();
   e.target.textContent = isOn ? "🔊" : "🔇";
@@ -2510,7 +2689,7 @@ function unlockAudio() {
   Sound.enable();
   hintEl.classList.add("gone");
 }
-window.addEventListener("pointerdown", unlockAudio, { once: false });
+window.addEventListener("pointerdown", unlockAudio, { once: false, capture: true });
 window.addEventListener("keydown", unlockAudio, { once: false });
 // fade the hint out on its own after a while even if untouched
 setTimeout(() => hintEl.classList.add("gone"), 8000);
@@ -2524,7 +2703,9 @@ function wake() {
   idleTimer = setTimeout(() => document.body.classList.add("idle"), 4000);
 }
 window.addEventListener("pointermove", wake);
-window.addEventListener("pointerdown", wake);
+// capture phase, so taps on the toolbar buttons (which stopPropagation to avoid
+// dropping food) still wake the controls instead of letting them fade away
+window.addEventListener("pointerdown", wake, true);
 window.addEventListener("keydown", wake);
 
 /* --- track the pointer so the frame loop can spotlight the fish under it --- */
