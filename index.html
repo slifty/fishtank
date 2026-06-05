@@ -146,7 +146,7 @@
     <h3>Friends, family &amp; rivalries <span class="date">· Jun 5, 2026</span></h3>
     <ul>
       <li>Fish make up to <b>5 friends</b> and gently swim toward them.</li>
-      <li>Fish never befriend or have babies with <b>family</b> (parents, siblings, cousins).</li>
+      <li>Fish never befriend or have babies with <b>close family</b> (parents, children, or siblings) — but cousins are fair game.</li>
       <li>Every fish now has a <b>hunger meter</b> that rises over time and refills when it eats.</li>
       <li>A hungry fish can turn into an <b>enemy</b> of one that eats right in front of it (up to 3). Enemies swim away from each other.</li>
     </ul>
@@ -516,8 +516,8 @@ class Fish {
     const sp = 42 * this.genes.speed;
     let ax = 0, ay = 0;
 
-    // --- hungry? chase food ---
-    const food = this.nearestFood();
+    // --- hungry? chase food (a full fish leaves it be until it's peckish) ---
+    const food = this.hunger > 0.3 ? this.nearestFood() : null;
     if (food) {
       const d = dist(this.x, this.y, food.x, food.y) || 1;
       ax += ((food.x - this.x) / d) * 2.2;
@@ -643,22 +643,23 @@ class Fish {
       if (other === this || other.id < this.id || other.inside) continue; // each pair once
       const d = dist(this.x, this.y, other.x, other.y);
       if (d < this.len * 1.4) {
-        // become friends — but never with family or sworn enemies, and only if
-        // both still have room in their friend circle (max 5 each)
+        // become friends — but never with close kin or sworn enemies, and only
+        // if both still have room in their friend circle (max 5 each)
         if (!this.friends.has(other.id) && !this.enemies.has(other.id) &&
-            this.friends.size < 5 && other.friends.size < 5 &&
-            !related(this, other) &&
+            fishFriendCount(this) < 5 && fishFriendCount(other) < 5 &&
+            !closeKin(this, other) &&
             Math.random() < 0.05 * this.genes.sociable * other.genes.sociable) {
           this.friends.add(other.id);
           other.friends.add(this.id);
           spawnHearts((this.x + other.x) / 2, (this.y + other.y) / 2, 3, 200);
           Sound.chirp();
         }
-        // friends + grown up + not on cooldown => baby! (never with family)
+        // friends + grown up + not on cooldown => baby! (never with close kin —
+        // i.e. no parents/children or siblings, but cousins are fair game)
         if (this.friends.has(other.id) &&
             this.grow >= 1 && other.grow >= 1 &&
             this.mateCooldown <= 0 && other.mateCooldown <= 0 &&
-            !related(this, other) &&
+            !closeKin(this, other) &&
             fishes.length < 60 &&
             Math.random() < 0.025) {
           this.haveBaby(other);
@@ -1022,7 +1023,6 @@ class Crab {
     this.speed = rand(18, 30);
     this.riding = null;       // the turtle this crab is hitching a ride on
     this.rideOff = 0;         // its perch offset along the shell
-    this.rideTimer = 0;
     this.floating = false;    // parachuting back down after leaping off
     this.vx = 0;              // sideways drift while floating
     this.swayT = 0;           // parachute sway phase
@@ -1031,17 +1031,15 @@ class Crab {
   update(dt) {
     this.legPhase += dt * (raveActive ? 32 : (this.riding ? 16 : (this.floating ? 7 : 10)));
     if (this.coolT > 0) this.coolT -= dt;
-    if (raveActive) { this.riding = null; this.floating = false; this.y = FLOOR() - 6; return; }
     // --- hitching a ride on the turtle's shell ---
     if (this.riding) {
       const t = this.riding;
       this.x = t.x + this.rideOff * t.dir;
       this.y = t.backY();
-      this.rideTimer -= dt;
-      // only base-jump when the turtle's high enough to actually float down
-      const highEnough = t.y < FLOOR() - 150;
-      if (highEnough && Math.random() < 0.01) { this.baseJump(); return; }   // a daring early leap
-      if (this.rideTimer <= 0) { highEnough ? this.baseJump() : this.dismount(); return; }
+      // during a rave they party right there on the shell (the dance hop is in
+      // draw); otherwise they chill until the turtle's high enough, then
+      // base-jump off and parachute down to the sand
+      if (!raveActive && t.y < FLOOR() - 150 && Math.random() < 0.012) this.baseJump();
       return;
     }
     // --- parachuting gently back down to the sand ---
@@ -1053,6 +1051,7 @@ class Crab {
       return;
     }
     this.y = FLOOR() - 6;
+    if (raveActive) return;   // dance in place on the sand during the party
     if (this.pauseTimer > 0) { this.pauseTimer -= dt; return; }
     this.x += this.dir * this.speed * dt;
     if (Math.random() < 0.004) this.pauseTimer = rand(0.5, 2);
@@ -1068,7 +1067,6 @@ class Crab {
   mount(t) {
     this.riding = t;
     this.rideOff = rand(-t.sw * 0.4, t.sw * 0.4);
-    this.rideTimer = rand(5, 12);
     spawnEmoji(this.x, this.y - 12, 1, "🦀");
   }
   baseJump() {
@@ -1079,11 +1077,6 @@ class Crab {
     this.coolT = 7;                 // rocks the shades through the descent + a strut
     Sound.plop();
     spawnEmoji(this.x, this.y - 16, 1, "😎");
-  }
-  dismount() {
-    this.riding = null;
-    this.y = FLOOR() - 6;
-    this.pauseTimer = rand(0.3, 1);
   }
   draw() {
     const s = 16 * this.size;
@@ -1332,7 +1325,10 @@ class Turtle {
       if (this.friends.has(f.id) || this.enemies.has(f.id)) continue;
       if (dist(this.x, this.y, f.x, f.y) > this.sw * 1.6) continue;
       const r = Math.random();
-      if (r < 0.004 && this.friends.size < 5 && f.friends.size < 5) this.befriend(f);
+      // the turtle can befriend any number of fish, and befriending it never
+      // counts against a fish's own 5-friend limit — being its friend is what
+      // keeps a fish off the menu, so it's always free on both sides
+      if (r < 0.004) this.befriend(f);
       else if (r < 0.008 && this.enemies.size < 3 && f.enemies.size < 3) this.makeEnemy(f);
     }
   }
@@ -2062,7 +2058,14 @@ function addFish() {
     Sound.plop();
   }
 }
-function addCrab() { if (crabs.length < 100) { crabs.push(new Crab(rand(60, W - 60))); Sound.plop(); } }
+function addCrab() {
+  if (crabs.length >= 100) return;
+  const c = new Crab(rand(60, W - 60));
+  crabs.push(c);
+  // every so often the newcomer turns up already perched on the turtle's shell
+  if (turtle && Math.random() < 0.03) { c.x = turtle.x; c.mount(turtle); }
+  Sound.plop();
+}
 function addSeahorse() { if (seahorses.length < 8) { seahorses.push(new Seahorse(rand(60, W - 60))); Sound.plop(); } }
 function addPlant() {
   if (decorations.filter(d => d instanceof Plant).length >= 16) return;
@@ -2115,13 +2118,22 @@ function bloodline(fish) {
   return seen;
 }
 
-// two fish are family if their blood lines share anyone — i.e. they have a
-// common ancestor (covers parents, children, siblings, cousins, …)
-function related(a, b) {
-  const ba = bloodline(a), bb = bloodline(b);
-  const [small, big] = ba.size < bb.size ? [ba, bb] : [bb, ba];
-  for (const id of small) if (big.has(id)) return true;
+// "close kin" = the same fish, a parent/child pair, or siblings (a shared
+// parent). Cousins and more distant blood are NOT close kin. This gates
+// befriending + breeding: it reads only the persistent `parents` ids, so it
+// stays correct after ancestors die (unlike walking the full blood line), and
+// allowing cousins keeps the gene pool from seizing up over the generations.
+function closeKin(a, b) {
+  if (a === b) return true;
+  if (a.parents.includes(b.id) || b.parents.includes(a.id)) return true; // parent/child
+  for (const p of a.parents) if (b.parents.includes(p)) return true;     // shared parent → siblings
   return false;
+}
+
+// how many *fish* a fish counts among its friends — the turtle never counts
+// toward the 5-friend limit, so befriending it is always free
+function fishFriendCount(f) {
+  return f.friends.size - (turtle && f.friends.has(turtle.id) ? 1 : 0);
 }
 
 // pick the nearest fish whose body covers the given point (null if none)
