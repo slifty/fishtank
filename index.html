@@ -128,6 +128,14 @@
     <h2>🐠 What's New</h2>
     <p class="sub">A little aquarium that keeps growing.</p>
 
+    <h3>🐢 Death and turtles <span class="date">· Jun 5, 2026</span></h3>
+    <ul>
+      <li>A <b>sea turtle</b> now drifts through the tank. Just like the fish, it makes friends and enemies (tap it to see them) — but it never has babies.</li>
+      <li>The turtle sometimes <b>eats its enemies</b> — and only its enemies — when it bumps into one, with a snappy little chomp.</li>
+      <li>🦀 Crabs can <b>climb aboard the turtle's shell</b> and ride along — and sometimes, if the turtle's swimming high enough, they'll <b>base-jump off and parachute down</b> in a pair of cool shades. 😎</li>
+      <li>💥 A fish that gets too hungry now <b>bursts into a puff of food</b> for the others.</li>
+    </ul>
+
     <h3>🦀 Crab rave <span class="date">· Jun 5, 2026</span></h3>
     <ul>
       <li>Poke a crab <b>6 times in a row</b> to throw a <b>crab rave</b> — disco lights, a thumping beat, and crabs dancing in unison.</li>
@@ -277,6 +285,14 @@ const Sound = (() => {
       [392, 523, 659, 784, 1047].forEach((f, i) =>
         setTimeout(() => tone(f, 0.18, "square", 0.08), i * 70));
     },
+    poof() { // a starved fish bursting into food
+      tone(440, 0.16, "triangle", 0.13, 120);
+      setTimeout(() => tone(200, 0.22, "sine", 0.09, 70), 60);
+    },
+    chomp() { // the turtle's jaws snapping shut on an enemy
+      tone(150, 0.07, "square", 0.18, 90);
+      setTimeout(() => tone(90, 0.12, "square", 0.14, 55), 55);
+    },
     // crab rave: a thumping kick, a ticking hi-hat, and a synth bassline
     raveKick() { tone(110, 0.16, "sine", 0.24, 38); },
     raveHat() { tone(7200, 0.025, "square", 0.03); },
@@ -380,10 +396,12 @@ const seahorses = [];
 const foods = [];
 const bubbles = [];
 const hearts = [];   // floating heart particles when friends/babies happen
+const chomps = [];   // brief bite-bursts when the turtle eats an enemy
 const decorations = [];
 const castles = [];  // subset of decorations that fish can swim in and out of
-const fishById = new Map();  // id -> fish, for walking family trees
+const fishById = new Map();  // id -> fish (and the turtle), for relationships
 let nextId = 1;
+let turtle = null;   // the one sea turtle — seeded at startup, never removed
 
 const FLOOR = () => H - 46;   // sandy bottom line
 
@@ -422,9 +440,16 @@ class Fish {
     this.visiting = false;         // swimming toward a castle door
     this.targetCastle = null;
     this.castleTimer = rand(8, 30); // time until it next feels like exploring
+    this.dead = false;             // removed from the tank this frame
+    this.starved = false;          // died of hunger → bursts into a puff of food
+    this.eatenT = 0;               // >0 while the turtle is gulping it down
   }
 
-  get len() { return this.baseLen * this.grow * this.fed; }
+  get len() {
+    // shrink away as the turtle gulps it down
+    const gulp = this.eatenT > 0 ? clamp(this.eatenT / 0.4, 0, 1) : 1;
+    return this.baseLen * this.grow * this.fed * gulp;
+  }
 
   nearestFood() {
     let best = null, bd = 220;
@@ -457,9 +482,25 @@ class Fish {
       return; // no swimming, drawing, or socializing while hidden
     }
 
+    // --- being eaten by the turtle: pulled into its mouth, shrinking ---
+    if (this.eatenT > 0) {
+      this.eatenT -= dt;
+      if (turtle) {
+        const mx = turtle.x + turtle.dir * turtle.sw;     // the turtle's mouth
+        const my = turtle.y - turtle.sh * 0.05;
+        const k = Math.min(1, dt * 12);
+        this.x += (mx - this.x) * k;
+        this.y += (my - this.y) * k;
+      }
+      if (this.eatenT <= 0) this.dead = true;   // gulped — vanishes (no food puff)
+      return;
+    }
+
     this.age += dt;
     this.wobble += dt * 8 * this.genes.speed;
     this.hunger = Math.min(1, this.hunger + dt * 0.012); // slowly gets peckish
+    // starves at full hunger — bursts into a puff of food for the others
+    if (this.hunger >= 1) { this.dead = true; this.starved = true; return; }
     if (this.grow < 1) this.grow = Math.min(1, this.grow + dt * 0.012);
     if (this.mateCooldown > 0) this.mateCooldown -= dt;
 
@@ -973,21 +1014,76 @@ class Food {
 class Crab {
   constructor(x) {
     this.x = x; this.dir = pick([-1, 1]);
+    this.y = FLOOR() - 6;
     this.hue = rand(0, 30);
     this.size = rand(0.8, 1.3);
     this.legPhase = 0;
     this.pauseTimer = 0;
     this.speed = rand(18, 30);
+    this.riding = null;       // the turtle this crab is hitching a ride on
+    this.rideOff = 0;         // its perch offset along the shell
+    this.rideTimer = 0;
+    this.floating = false;    // parachuting back down after leaping off
+    this.vx = 0;              // sideways drift while floating
+    this.swayT = 0;           // parachute sway phase
+    this.coolT = 0;           // seconds it keeps its shades on after a jump
   }
   update(dt) {
-    this.legPhase += dt * (raveActive ? 32 : 10);
-    if (raveActive) return;   // during the rave the crabs dance in place
+    this.legPhase += dt * (raveActive ? 32 : (this.riding ? 16 : (this.floating ? 7 : 10)));
+    if (this.coolT > 0) this.coolT -= dt;
+    if (raveActive) { this.riding = null; this.floating = false; this.y = FLOOR() - 6; return; }
+    // --- hitching a ride on the turtle's shell ---
+    if (this.riding) {
+      const t = this.riding;
+      this.x = t.x + this.rideOff * t.dir;
+      this.y = t.backY();
+      this.rideTimer -= dt;
+      // only base-jump when the turtle's high enough to actually float down
+      const highEnough = t.y < FLOOR() - 150;
+      if (highEnough && Math.random() < 0.01) { this.baseJump(); return; }   // a daring early leap
+      if (this.rideTimer <= 0) { highEnough ? this.baseJump() : this.dismount(); return; }
+      return;
+    }
+    // --- parachuting gently back down to the sand ---
+    if (this.floating) {
+      this.swayT += dt * 2;
+      this.x = clamp(this.x + Math.sin(this.swayT) * 16 * dt + this.vx * dt, 20, W - 20);
+      this.y += 44 * dt;
+      if (this.y >= FLOOR() - 6) { this.y = FLOOR() - 6; this.floating = false; this.pauseTimer = rand(0.3, 1); }
+      return;
+    }
+    this.y = FLOOR() - 6;
     if (this.pauseTimer > 0) { this.pauseTimer -= dt; return; }
     this.x += this.dir * this.speed * dt;
     if (Math.random() < 0.004) this.pauseTimer = rand(0.5, 2);
     if (Math.random() < 0.003) this.dir *= -1;
     if (this.x < 30) this.dir = 1;
     if (this.x > W - 30) this.dir = -1;
+    // climb aboard if the turtle is cruising low and nearby
+    if (turtle && turtle.y > FLOOR() - 80 && turtle.riders < 5 &&
+        Math.abs(turtle.x - this.x) < turtle.sw * 0.8 && Math.random() < 0.03) {
+      this.mount(turtle);
+    }
+  }
+  mount(t) {
+    this.riding = t;
+    this.rideOff = rand(-t.sw * 0.4, t.sw * 0.4);
+    this.rideTimer = rand(5, 12);
+    spawnEmoji(this.x, this.y - 12, 1, "🦀");
+  }
+  baseJump() {
+    this.riding = null;
+    this.floating = true;
+    this.swayT = rand(0, TAU);
+    this.vx = rand(-16, 16);
+    this.coolT = 7;                 // rocks the shades through the descent + a strut
+    Sound.plop();
+    spawnEmoji(this.x, this.y - 16, 1, "😎");
+  }
+  dismount() {
+    this.riding = null;
+    this.y = FLOOR() - 6;
+    this.pauseTimer = rand(0.3, 1);
   }
   draw() {
     const s = 16 * this.size;
@@ -999,7 +1095,7 @@ class Crab {
       tilt = Math.sin(ph * 2) * 0.2;
       hue = (raveT * 200 + this.x) % 360;
     }
-    const y = FLOOR() - 6;
+    const y = this.y;
     ctx.save();
     ctx.translate(this.x, y + yOff);
     ctx.rotate(tilt);
@@ -1035,6 +1131,38 @@ class Crab {
       ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ex, -s * 0.95, s * 0.16, 0, TAU); ctx.fill();
       ctx.fillStyle = "#102030"; ctx.beginPath(); ctx.arc(ex, -s * 0.95, s * 0.08, 0, TAU); ctx.fill();
     }
+    // shades — the cool outfit it wears after a daring leap off the turtle
+    if (this.floating || this.coolT > 0) {
+      ctx.fillStyle = "#101015";
+      ctx.beginPath(); ctx.ellipse(-s * 0.3, -s * 0.92, s * 0.26, s * 0.2, 0, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(s * 0.3, -s * 0.92, s * 0.26, s * 0.2, 0, 0, TAU); ctx.fill();
+      ctx.strokeStyle = "#101015"; ctx.lineWidth = s * 0.12;
+      ctx.beginPath(); ctx.moveTo(-s * 0.08, -s * 0.95); ctx.lineTo(s * 0.08, -s * 0.95); ctx.stroke();
+      // a little glint
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.beginPath(); ctx.arc(-s * 0.36, -s * 0.98, s * 0.05, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(s * 0.24, -s * 0.98, s * 0.05, 0, TAU); ctx.fill();
+    }
+    // parachute — a billowing canopy on strings while floating down
+    if (this.floating) {
+      const cw = s * 2.4, cy = -s * 3.4;
+      ctx.strokeStyle = "rgba(245,245,255,0.85)"; ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.6, -s * 0.5); ctx.lineTo(-cw * 0.5, cy);
+      ctx.moveTo(s * 0.6, -s * 0.5); ctx.lineTo(cw * 0.5, cy);
+      ctx.moveTo(0, -s * 0.7); ctx.lineTo(0, cy);
+      ctx.stroke();
+      const pg = ctx.createLinearGradient(0, cy - s, 0, cy + s * 0.6);
+      pg.addColorStop(0, hsl((this.hue + 170) % 360, 80, 62));
+      pg.addColorStop(1, hsl((this.hue + 170) % 360, 75, 46));
+      ctx.fillStyle = pg;
+      ctx.beginPath();
+      ctx.moveTo(-cw * 0.5, cy);
+      ctx.quadraticCurveTo(0, cy - cw * 0.6, cw * 0.5, cy);
+      ctx.quadraticCurveTo(cw * 0.25, cy + s * 0.55, 0, cy + s * 0.1);
+      ctx.quadraticCurveTo(-cw * 0.25, cy + s * 0.55, -cw * 0.5, cy);
+      ctx.closePath(); ctx.fill();
+    }
     ctx.restore();
   }
 }
@@ -1050,15 +1178,19 @@ class Seahorse {
     this.t = rand(0, TAU);
     this.dir = pick([-1, 1]);
     this.baseY = this.y;
+    this.targetY = this.y;      // the depth it's gently drifting toward
   }
   update(dt) {
     this.t += dt * 2;
-    this.y = this.baseY + Math.sin(this.t) * 18;
     this.x += this.dir * 8 * dt;
     if (Math.random() < 0.004) this.dir *= -1;
     if (this.x < 40) this.dir = 1;
     if (this.x > W - 40) this.dir = -1;
-    if (Math.random() < 0.003) this.baseY = clamp(this.baseY + rand(-30, 30), H * 0.3, FLOOR() - 50);
+    // occasionally choose a new resting depth, then ease toward it instead of
+    // snapping — a sudden baseY jump used to make the seahorse pop up/down
+    if (Math.random() < 0.003) this.targetY = clamp(this.baseY + rand(-30, 30), H * 0.3, FLOOR() - 50);
+    this.baseY += (this.targetY - this.baseY) * Math.min(1, dt * 1.5);
+    this.y = this.baseY + Math.sin(this.t) * 18;
   }
   draw() {
     const s = 22 * this.size;
@@ -1085,6 +1217,205 @@ class Seahorse {
     // eye
     ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(s * 0.1, -s, s * 0.13, 0, TAU); ctx.fill();
     ctx.fillStyle = "#102030"; ctx.beginPath(); ctx.arc(s * 0.12, -s, s * 0.07, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
+   SEA TURTLE — a single, long-lived turtle that drifts around the tank. It
+   makes friends and enemies like the fish (but never breeds), occasionally
+   eats an enemy it bumps into, and lets crabs hitch a ride on its shell.
+   ========================================================================= */
+class Turtle {
+  constructor(x, y) {
+    this.id = nextId++;
+    this.name = randomName();
+    this.x = x; this.y = y;
+    this.vx = pick([-1, 1]) * 0.4; this.vy = 0;
+    this.dir = this.vx >= 0 ? 1 : -1;
+    this.size = 1.15;
+    this.sw = 50 * this.size;          // shell half-width
+    this.sh = 34 * this.size;          // shell half-height
+    this.hue = rand(95, 135);          // mossy green
+    this.flipperPhase = rand(0, TAU);
+    this.wanderAng = rand(0, TAU);
+    this.thinkTimer = 0;
+    this.age = 0;
+    this.friends = new Set();
+    this.enemies = new Set();
+    this.parents = [];                 // never breeds — keeps bloodline() happy
+    this.riders = 0;                   // crabs currently on the shell
+    this.chompT = 0;                   // >0 briefly while its jaws snap shut
+    this.grudge = new Map();           // enemy id → seconds before it'll bite it
+    fishById.set(this.id, this);
+  }
+
+  get len() { return this.sw * 1.4; }  // used by selection + info-card layout
+  backY() { return this.y - this.sh * 0.78; }  // where crabs perch on the shell
+
+  update(dt) {
+    this.age += dt;
+    this.flipperPhase += dt * 2.6;
+    if (this.chompT > 0) this.chompT -= dt;
+    // tick down each grudge — a fresh enemy is glared at, not eaten, for a beat
+    for (const [id, t] of this.grudge) {
+      if (t - dt <= 0) this.grudge.delete(id); else this.grudge.set(id, t - dt);
+    }
+
+    // count crabs riding right now (for the climb-aboard cap)
+    this.riders = 0;
+    for (const c of crabs) if (c.riding === this) this.riders++;
+
+    let ax = 0, ay = 0;
+
+    // lazy wander
+    this.thinkTimer -= dt;
+    if (this.thinkTimer <= 0) { this.thinkTimer = rand(1.5, 4); this.wanderAng += rand(-0.7, 0.7); }
+    ax += Math.cos(this.wanderAng) * 0.5;
+    ay += Math.sin(this.wanderAng) * 0.25;
+
+    // drift toward friends; stalk the nearest enemy so collisions actually happen
+    let prey = null, pd = Infinity;
+    for (const f of fishes) {
+      if (f.inside || f.dead) continue;
+      const d = dist(this.x, this.y, f.x, f.y) || 1;
+      if (this.friends.has(f.id) && d < 300) { ax += ((f.x - this.x) / d) * 0.4; ay += ((f.y - this.y) / d) * 0.4; }
+      if (this.enemies.has(f.id) && d < 360 && d < pd) { pd = d; prey = f; }
+    }
+    if (prey) {
+      const d = pd || 1;
+      ax += ((prey.x - this.x) / d) * 1.2;   // give chase
+      ay += ((prey.y - this.y) / d) * 1.2;
+    }
+
+    // keep off the edges, the surface, and the sandy floor
+    const m = 70;
+    if (this.x < m) ax += (m - this.x) * 0.02;
+    if (this.x > W - m) ax -= (this.x - (W - m)) * 0.02;
+    if (this.y < H * 0.2) ay += (H * 0.2 - this.y) * 0.02;
+    if (this.y > FLOOR() - 18) ay -= (this.y - (FLOOR() - 18)) * 0.05;
+
+    this.vx += ax * dt; this.vy += ay * dt;
+    const v = Math.hypot(this.vx, this.vy) || 1;
+    const max = prey ? 1.1 : 0.85;
+    if (v > max) { this.vx = (this.vx / v) * max; this.vy = (this.vy / v) * max; }
+    this.vy *= 0.99;
+
+    const sp = 40;
+    this.x += this.vx * sp * dt;
+    this.y += this.vy * sp * dt;
+    this.x = clamp(this.x, 30, W - 30);
+    this.y = clamp(this.y, H * 0.16, FLOOR() - 12);
+    if (Math.abs(this.vx) > 0.04) this.dir = this.vx > 0 ? 1 : -1;
+
+    // chomp! a turtle ONLY ever eats its own enemies — friends and strangers
+    // are perfectly safe. And only an enemy it's borne a grudge against for a
+    // couple of seconds (not one it just fell out with this instant), so the
+    // 💢 is always clearly visible before the bite.
+    for (const f of fishes) {
+      if (f.dead || f.eatenT > 0 || !this.enemies.has(f.id) || this.grudge.has(f.id)) continue;
+      if (dist(this.x, this.y, f.x, f.y) < this.sw * 0.85 + f.len * 0.3 && Math.random() < 0.06) {
+        f.eatenT = 0.4;                 // start the gulp animation (dies when it ends)
+        this.enemies.delete(f.id);      // stop chasing — it's a goner
+        this.chompT = 0.4;              // snap the jaws shut
+        chomps.push(new Chomp(f.x, f.y));
+        Sound.chomp();
+      }
+    }
+
+    this.socialize();
+  }
+
+  socialize() {
+    for (const f of fishes) {
+      if (f.inside || f.dead) continue;
+      if (this.friends.has(f.id) || this.enemies.has(f.id)) continue;
+      if (dist(this.x, this.y, f.x, f.y) > this.sw * 1.6) continue;
+      const r = Math.random();
+      if (r < 0.004 && this.friends.size < 5 && f.friends.size < 5) this.befriend(f);
+      else if (r < 0.008 && this.enemies.size < 3 && f.enemies.size < 3) this.makeEnemy(f);
+    }
+  }
+
+  befriend(f) {
+    this.friends.add(f.id); f.friends.add(this.id);
+    spawnHearts((this.x + f.x) / 2, (this.y + f.y) / 2, 3, 200);
+    Sound.chirp();
+  }
+
+  makeEnemy(f) {
+    this.friends.delete(f.id); f.friends.delete(this.id);
+    this.enemies.add(f.id); f.enemies.add(this.id);
+    this.grudge.set(f.id, 2.5);   // glare for 2.5s before it'll consider biting
+    spawnEmoji((this.x + f.x) / 2, (this.y + f.y) / 2, 2, "💢");
+    Sound.grumble();
+  }
+
+  draw() {
+    const sw = this.sw, sh = this.sh;
+    const paddle = Math.sin(this.flipperPhase) * 0.5;
+    const skin = hsl(this.hue, 35, 45);
+    const skinD = hsl(this.hue, 35, 36);
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.scale(this.dir, 1);
+
+    // far flippers + tail, tucked behind the shell
+    ctx.fillStyle = skinD;
+    ctx.save(); ctx.translate(sw * 0.45, sh * 0.2); ctx.rotate(0.5 + paddle * 0.5);
+    ctx.beginPath(); ctx.ellipse(0, 0, sw * 0.5, sh * 0.26, 0, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(-sw * 0.5, sh * 0.2); ctx.rotate(-0.5 - paddle * 0.4);
+    ctx.beginPath(); ctx.ellipse(0, 0, sw * 0.4, sh * 0.22, 0, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.beginPath(); ctx.ellipse(-sw * 0.95, 0, sw * 0.14, sh * 0.12, 0, 0, TAU); ctx.fill(); // tail
+
+    // head
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.ellipse(sw * 0.95, -sh * 0.05, sw * 0.3, sh * 0.32, 0, 0, TAU); ctx.fill();
+    // chomping mouth — a dark wedge at the snout that opens then snaps shut
+    if (this.chompT > 0) {
+      const open = Math.sin((1 - this.chompT / 0.4) * Math.PI);   // 0 → wide → 0
+      const hx = sw * 1.18, hy = -sh * 0.02;
+      ctx.fillStyle = "#3a0d0d";
+      ctx.beginPath();
+      ctx.moveTo(hx - sw * 0.2, hy);
+      ctx.lineTo(hx + sw * 0.06, hy - sh * (0.05 + 0.28 * open));
+      ctx.lineTo(hx + sw * 0.06, hy + sh * (0.05 + 0.28 * open));
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = "#fff";
+    ctx.beginPath(); ctx.arc(sw * 1.08, -sh * 0.15, sh * 0.1, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#102030";
+    ctx.beginPath(); ctx.arc(sw * 1.11, -sh * 0.15, sh * 0.05, 0, TAU); ctx.fill();
+
+    // near flippers (the paddling ones)
+    ctx.fillStyle = skin;
+    ctx.save(); ctx.translate(sw * 0.5, sh * 0.45); ctx.rotate(0.5 + paddle);
+    ctx.beginPath(); ctx.ellipse(0, 0, sw * 0.6, sh * 0.3, 0, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(-sw * 0.45, sh * 0.4); ctx.rotate(-0.6 - paddle * 0.8);
+    ctx.beginPath(); ctx.ellipse(0, 0, sw * 0.45, sh * 0.24, 0, 0, TAU); ctx.fill(); ctx.restore();
+
+    // shell
+    const grad = ctx.createLinearGradient(0, -sh, 0, sh);
+    grad.addColorStop(0, hsl(this.hue, 50, 42));
+    grad.addColorStop(1, hsl(this.hue, 55, 26));
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.ellipse(0, 0, sw, sh, 0, 0, TAU); ctx.fill();
+    // rim
+    ctx.strokeStyle = hsl(this.hue, 45, 20); ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(0, 0, sw, sh, 0, 0, TAU); ctx.stroke();
+    // scutes — a centre column with hexes either side
+    ctx.strokeStyle = hsl(this.hue, 40, 18); ctx.lineWidth = 2;
+    ctx.fillStyle = hsl(this.hue, 48, 34);
+    for (const cx of [-sw * 0.42, 0, sw * 0.42]) {
+      ctx.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = k / 6 * TAU + 0.5;
+        const px = cx + Math.cos(a) * sw * 0.22;
+        const py = Math.sin(a) * sh * 0.34;
+        k ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
     ctx.restore();
   }
 }
@@ -1144,6 +1475,52 @@ function spawnHearts(x, y, n, _spread) {
 // little floating emoji puffs (e.g. 💢 when two fish fall out)
 function spawnEmoji(x, y, n, char) {
   for (let i = 0; i < n; i++) hearts.push(new Heart(x + rand(-10, 10), y + rand(-10, 10), char));
+}
+
+// a quick bite-burst where the turtle chomps an enemy: a jagged red ring snaps
+// outward, a white flash pops, and a few bits fly off
+class Chomp {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.t = 0; this.life = 0.45;
+    this.rot = rand(0, TAU);
+    this.bits = Array.from({ length: 6 }, (_, i) => ({
+      a: i / 6 * TAU + rand(-0.3, 0.3), sp: rand(40, 90),
+    }));
+  }
+  update(dt) { this.t += dt; return this.t < this.life; }
+  draw() {
+    const p = clamp(this.t / this.life, 0, 1);   // 0 → 1
+    ctx.save();
+    // white flash, brightest at the start
+    if (p < 0.4) {
+      ctx.globalAlpha = (1 - p / 0.4) * 0.8;
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(this.x, this.y, 10 + p * 24, 0, TAU); ctx.fill();
+    }
+    // jagged "snap" ring expanding outward
+    ctx.globalAlpha = 1 - p;
+    ctx.strokeStyle = "hsl(0,85%,60%)";
+    ctx.lineWidth = 3;
+    const r = 8 + p * 30, spikes = 10;
+    ctx.beginPath();
+    for (let i = 0; i <= spikes; i++) {
+      const a = this.rot + i / spikes * TAU;
+      const rr = r * (i % 2 ? 0.55 : 1);
+      const px = this.x + Math.cos(a) * rr, py = this.y + Math.sin(a) * rr;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.closePath(); ctx.stroke();
+    // little bits flung out
+    ctx.fillStyle = "hsl(15,80%,60%)";
+    for (const b of this.bits) {
+      const d = p * b.sp;
+      ctx.beginPath();
+      ctx.arc(this.x + Math.cos(b.a) * d, this.y + Math.sin(b.a) * d, (1 - p) * 3, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 }
 
 /* =========================================================================
@@ -1668,6 +2045,7 @@ function seedTank() {
   for (let i = 0; i < 6; i++) fishes.push(new Fish(rand(60, W - 60), rand(80, H * 0.6)));
   crabs.push(new Crab(rand(60, W - 60)));
   seahorses.push(new Seahorse(rand(60, W - 60)));
+  turtle = new Turtle(W * 0.5, H * 0.4);   // the one and only sea turtle 🐢
 
   // a few ambient bubbles to start
   for (let i = 0; i < 12; i++) bubbles.push(new Bubble(rand(0, W), rand(0, H)));
@@ -1696,6 +2074,23 @@ function addPlant() {
 function feedAt(x, y) {
   for (let i = 0; i < 5; i++) foods.push(new Food(x + rand(-20, 20), y + rand(-6, 6)));
   Sound.plop();
+}
+
+// remove a fish from the tank, scrubbing it from everyone's relationships. A
+// starved fish bursts into a little cloud of food on the way out.
+function removeFishAt(i) {
+  const f = fishes[i];
+  if (f.starved) {
+    for (let k = 0; k < 5; k++) foods.push(new Food(f.x + rand(-14, 14), f.y + rand(-10, 10)));
+    for (let k = 0; k < 5; k++) bubbles.push(new Bubble(f.x + rand(-10, 10), f.y + rand(-6, 6)));
+    spawnEmoji(f.x, f.y, 3, "💥");
+    Sound.poof();
+  }
+  fishes.splice(i, 1);
+  fishById.delete(f.id);
+  for (const o of fishes) { o.friends.delete(f.id); o.enemies.delete(f.id); }
+  if (turtle) { turtle.friends.delete(f.id); turtle.enemies.delete(f.id); turtle.grudge.delete(f.id); }
+  if (selected === f) selected = null;
 }
 
 /* =========================================================================
@@ -1753,12 +2148,16 @@ function ageInYears(sec) {
 }
 
 function drawHoverHighlights() {
-  if (!selected || selected.inside || !fishes.includes(selected)) return;
+  // the selection can be a fish or the turtle; bail if it's gone or hidden
+  const present = fishes.includes(selected) || selected === turtle;
+  if (!selected || selected.inside || !present) return;
 
+  // fish + turtle, so relationships are highlighted whichever one is selected
+  const others = turtle ? fishes.concat(turtle) : fishes;
   const friendIds = selected.friends;
   const enemyIds = selected.enemies;
   const myBlood = bloodline(selected);
-  const relativeIds = new Set();
+  const relativeIds = new Set();   // family is a fish-only notion (turtle never breeds)
   for (const f of fishes) {
     if (f === selected) continue;
     const theirs = bloodline(f);
@@ -1773,9 +2172,9 @@ function drawHoverHighlights() {
   const FAMILY = "hsl(45,95%,60%)";
   const ENEMY = "hsl(0,85%,60%)";
 
-  // connecting lines from the selected fish to each highlighted fish
+  // connecting lines from the selection to each highlighted creature
   ctx.lineWidth = 2;
-  for (const f of fishes) {
+  for (const f of others) {
     if (f === selected) continue;
     const isFriend = friendIds.has(f.id);
     const isRel = relativeIds.has(f.id);
@@ -1800,7 +2199,7 @@ function drawHoverHighlights() {
     ctx.arc(f.x, f.y, r, 0, TAU);
     ctx.stroke();
   };
-  for (const f of fishes) {
+  for (const f of others) {
     const isFriend = friendIds.has(f.id);
     const isRel = relativeIds.has(f.id);
     const isEnemy = enemyIds.has(f.id);
@@ -1823,23 +2222,29 @@ function drawHoverHighlights() {
   const ly = selected.y - selected.len * 0.75 - 16;
   const sg = selected.genes;
   const traits = [];
-  if (sg.glow) traits.push("✨");
-  if (sg.bubbles) traits.push("🫧");
-  if (sg.horn) traits.push("🦄");
-  if (sg.whiskers) traits.push("🐱");
-  if (sg.eyelashes) traits.push("👁️");
+  if (sg) {
+    if (sg.glow) traits.push("✨");
+    if (sg.bubbles) traits.push("🫧");
+    if (sg.horn) traits.push("🦄");
+    if (sg.whiskers) traits.push("🐱");
+    if (sg.eyelashes) traits.push("👁️");
+  } else {
+    traits.push("🐢");   // the turtle wears its own badge
+  }
   ctx.font = "bold 20px -apple-system, sans-serif";
   ctx.fillText(selected.name, cx, ly - 66);
   ctx.font = "16px -apple-system, sans-serif";
   if (traits.length) ctx.fillText(traits.join("  "), cx, ly - 88);
-  // hunger meter — five dots, green when full, red when starving
-  const fullness = clamp(1 - selected.hunger, 0, 1);
-  const lvl = Math.round(fullness * 5);
-  ctx.fillStyle = `hsl(${(fullness * 120).toFixed(0)},85%,55%)`;
-  ctx.fillText("🍽 " + "●".repeat(lvl) + "○".repeat(5 - lvl), cx, ly - 44);
-  ctx.fillStyle = "#fff";
+  // hunger meter — fish only; five dots, green when full, red when starving
+  if (selected.hunger !== undefined) {
+    const fullness = clamp(1 - selected.hunger, 0, 1);
+    const lvl = Math.round(fullness * 5);
+    ctx.fillStyle = `hsl(${(fullness * 120).toFixed(0)},85%,55%)`;
+    ctx.fillText("🍽 " + "●".repeat(lvl) + "○".repeat(5 - lvl), cx, ly - 44);
+    ctx.fillStyle = "#fff";
+  }
   ctx.fillText("🎂 " + ageInYears(selected.age), cx, ly - 22);
-  ctx.fillText("💚 friends  💛 family  💢 enemies", cx, ly);
+  ctx.fillText(sg ? "💚 friends  💛 family  💢 enemies" : "💚 friends  💢 enemies", cx, ly);
   ctx.textAlign = "left";
 }
 
@@ -1869,12 +2274,17 @@ const RAVE_RIFF = [
 ];
 
 function crabAt(x, y) {
-  const cy = FLOOR() - 6;
   for (const c of crabs) {
     const s = 16 * c.size;
-    if (Math.abs(x - c.x) < s * 1.3 && y > cy - s * 2.2 && y < cy + s) return c;
+    if (Math.abs(x - c.x) < s * 1.3 && y > c.y - s * 2.2 && y < c.y + s) return c;
   }
   return null;
+}
+
+// the turtle, if the point lands on its shell or head (null otherwise)
+function turtleAt(x, y) {
+  if (!turtle) return null;
+  return dist(x, y, turtle.x, turtle.y) < turtle.len ? turtle : null;
 }
 
 function pokeCrab(c) {
@@ -1967,12 +2377,16 @@ function frame(now) {
   if (bubbleSpawn <= 0) { bubbleSpawn = rand(0.3, 0.9); bubbles.push(new Bubble(rand(0, W), FLOOR())); }
 
   fishes.forEach(f => f.update(dt));
+  if (turtle) turtle.update(dt);             // may mark an enemy fish as eaten
   crabs.forEach(c => c.update(dt));
   seahorses.forEach(s => s.update(dt));
+  // clear out fish that died this frame (starvation bursts into food; eaten ones don't)
+  for (let i = fishes.length - 1; i >= 0; i--) if (fishes[i].dead) removeFishAt(i);
   foods.forEach(f => f.update(dt));
   for (let i = foods.length - 1; i >= 0; i--) if (foods[i].dead) foods.splice(i, 1);
   for (let i = bubbles.length - 1; i >= 0; i--) if (!bubbles[i].update(dt)) bubbles.splice(i, 1);
   for (let i = hearts.length - 1; i >= 0; i--) if (!hearts[i].update(dt)) hearts.splice(i, 1);
+  for (let i = chomps.length - 1; i >= 0; i--) if (!chomps[i].update(dt)) chomps.splice(i, 1);
   for (let i = visitors.length - 1; i >= 0; i--) if (!visitors[i].update(dt)) visitors.splice(i, 1);
 
   surpriseTimer -= dt;
@@ -2000,18 +2414,22 @@ function frame(now) {
   bubbles.forEach(b => b.draw());
   foods.forEach(f => f.draw());
   seahorses.forEach(s => s.draw());
+  if (turtle) turtle.draw();                  // the turtle drifts among the fish
   fishes.forEach(f => f.draw());
-  crabs.forEach(c => c.draw());
+  crabs.forEach(c => c.draw());               // crabs (incl. shell riders) on top
   drawDecorFront();
   drawNightVeil();                            // dim the whole scene after dark
   drawRave();                                 // disco lights override the dark 🦀
   canvas.style.cursor =
-    (fishUnderPointer() || (pointer.active && crabAt(pointer.x, pointer.y))) ? "pointer" : "default";
+    (fishUnderPointer() ||
+     (pointer.active && (crabAt(pointer.x, pointer.y) || turtleAt(pointer.x, pointer.y))))
+      ? "pointer" : "default";
   drawHoverHighlights();
   hearts.forEach(h => h.draw());
+  chomps.forEach(c => c.draw());             // bite-bursts pop on top of everything
 
   document.getElementById("count").textContent =
-    `🐟 ${fishes.length}   🦀 ${crabs.length}   🐴 ${seahorses.length}`;
+    `🐟 ${fishes.length}   🦀 ${crabs.length}   🐴 ${seahorses.length}   🐢 ${turtle ? 1 : 0}`;
 
   requestAnimationFrame(frame);
 }
@@ -2034,6 +2452,13 @@ canvas.addEventListener("pointerdown", (e) => {
   }
   const c = crabAt(x, y);
   if (c) { pokeCrab(c); return; }   // poke a crab — enough in a row starts a rave 🦀
+  const t = turtleAt(x, y);
+  if (t) {
+    // tapping the turtle toggles its info mode (friends & enemies)
+    selected = (selected === t) ? null : t;
+    crabCombo = 0;
+    return;
+  }
   selected = null;   // tapping the water turns info mode off...
   crabCombo = 0;
   feedAt(x, y);      // ...and drops food where you tapped

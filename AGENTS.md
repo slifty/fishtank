@@ -42,9 +42,20 @@ Reading top to bottom, the file is laid out as:
    - **Entity arrays**: `fishes`, `crabs`, `seahorses`, `foods`, `bubbles`,
      `hearts`, `decorations`, `castles`, plus `fishById` and `nextId`.
    - **Classes**, each with `update(dt)` and `draw()`: `Fish` (by far the
-     biggest), `Food`, `Crab`, `Seahorse`, `Bubble`, `Heart`, `Plant`, `Rock`,
-     `Castle`, `Chest`, and transient `visitors` (`Whale`, `Jellyfish`,
-     `Penguin`) triggered by `triggerSurprise()`.
+     biggest), `Food`, `Crab`, `Seahorse`, `Turtle`, `Bubble`, `Heart`,
+     `Plant`, `Rock`, `Castle`, `Chest`, and transient `visitors` (`Whale`,
+     `Jellyfish`, `Penguin`) triggered by `triggerSurprise()`.
+   - **Relationships** (friends/enemies) are `Set`s of entity `id`s stored on
+     each fish *and* on the single `turtle`. `fishById` maps every id (fish +
+     turtle) to its object, so highlight/selection code can resolve them. The
+     turtle has `parents: []` so `bloodline()`/`related()` treat it as having
+     no family (it never breeds). `selected` may be a fish or the turtle;
+     `drawHoverHighlights()` iterates `fishes.concat(turtle)` so a relationship
+     shows whichever side is tapped.
+   - **Fish death**: a fish sets `dead` (and `starved`) on itself; the frame
+     loop's removal pass calls `removeFishAt()`, which scrubs its id from every
+     friends/enemies set and `fishById`. Starved fish burst into `Food`; fish
+     eaten by the turtle just vanish.
    - **Day/night**: `tankClock`, `daylight`, `dayMode` (`"cycle" | "day" |
      "night"`), `DAY_PERIOD`, `drawBackground()`, `drawNightVeil()`.
    - **Interaction/hit-testing**: `tankXY(e)` maps a pointer event to tank
