@@ -155,6 +155,13 @@
     <h2>🐠 What's New</h2>
     <p class="sub">A little aquarium that keeps growing.</p>
 
+    <h3>🐙 Buried treasure <span class="date">· Jun 5, 2026</span></h3>
+    <ul>
+      <li>Octopuses now occasionally <b>dig in the sand</b> — watch for the flying sand and the ⛏️.</li>
+      <li>Rarely, they unearth <b>buried treasure</b>: a burst of gold coins shoots out, and a cute <b>pirate ghost</b> 👻 floats up from the dig spot to the surface, then fades away.</li>
+      <li>An octopus that found treasure gets a <b>gold ring</b> on one of its arms — up to one ring per arm, eight arms total. 💍</li>
+    </ul>
+
     <h3>📊 Tank Stats <span class="date">· Jun 5, 2026</span></h3>
     <ul>
       <li>New 📊 button opens a <b>statistics</b> window with a running tally of the tank: births &amp; deaths, fish eaten by the turtle, food eaten, oldest fish, generations deep, friendships &amp; rivalries, castle visits, bubbles popped, crab raves, parachutes, rides &amp; distance walked, seaweed grown, days passed, and creature sightings.</li>
@@ -340,6 +347,15 @@ const Sound = (() => {
     raveKick() { tone(110, 0.16, "sine", 0.24, 38); },
     raveHat() { tone(7200, 0.025, "square", 0.03); },
     raveNote(f) { if (f) tone(f, 0.14, "sawtooth", 0.06); },
+    treasure() { // ascending jingle when an octopus unearths buried gold
+      [330, 392, 523, 659, 784].forEach((f, i) =>
+        setTimeout(() => tone(f, 0.18, "triangle", 0.10), i * 55));
+      setTimeout(() => tone(1047, 0.4, "sine", 0.07, 880), 300);
+    },
+    ghostWail() { // eerie sigh as the pirate ghost drifts upward
+      tone(260, 0.7, "sine", 0.035, 180);
+      setTimeout(() => tone(200, 0.5, "sine", 0.025, 170), 380);
+    },
     // ambient bubbling, called every frame
     tick(dt) {
       if (!on) return;
@@ -445,6 +461,9 @@ const castles = [];  // subset of decorations that fish can swim in and out of
 const fishById = new Map();  // id -> fish (and the turtle), for relationships
 let nextId = 1;
 let turtle = null;   // the one sea turtle — seeded at startup, never removed
+const coinBursts = [];     // gold coin showers when an octopus finds buried treasure
+const pirateGhosts = [];   // pirate ghosts that float up from dig sites
+const sandParticles = [];  // sand grains kicked up while an octopus digs
 
 // session-only running tallies, shown in the 📊 Statistics window. crabFeet is
 // raw pixels walked, converted to feet/miles for display (see PX_PER_FT).
@@ -453,6 +472,7 @@ const stats = {
   friendships: 0, rivalries: 0, castleVisits: 0, bubblesPopped: 0,
   raves: 0, chutes: 0, crabFeet: 0, rides: 0,
   whales: 0, jellies: 0, penguins: 0,
+  treasures: 0,
 };
 
 const FLOOR = () => H - 46;   // sandy bottom line
@@ -496,6 +516,11 @@ class Fish {
     this.starved = false;          // died of hunger → bursts into a puff of food
     this.eatenT = 0;               // >0 while the turtle is gulping it down
     this.gen = 1;                  // generation: founders are 1, babies parent+1
+    // octopus-only digging state (initialised for all so breed() babies work)
+    this.digTimer = rand(15, 40); // seconds until next dig attempt
+    this.digging = 0;             // >0: dig in progress (seconds remaining)
+    this.sandEmit = 0;            // countdown to next sand particle burst
+    this.rings = new Set();       // arm indices (0-7) wearing a gold ring
   }
 
   get len() {
@@ -564,6 +589,39 @@ class Fish {
       if (this.bubbleEmit <= 0) {
         this.bubbleEmit = rand(1.0, 2.6);
         bubbles.push(new Bubble(this.x + this.dir * this.len * 0.5, this.y - this.len * 0.05));
+      }
+    }
+
+    // ---- octopus: occasionally dig in the sand, sometimes finding treasure ----
+    if (this.genes.kind === "octopus") {
+      if (this.digging > 0) {
+        this.digging -= dt;
+        this.wobble += dt * 10; // frantic tentacle thrash during dig
+        this.sandEmit -= dt;
+        if (this.sandEmit <= 0) {
+          this.sandEmit = rand(0.1, 0.22);
+          for (let k = 0; k < 2; k++)
+            sandParticles.push(new SandParticle(this.x + rand(-14, 14), this.y + rand(0, 8)));
+        }
+        // settle onto the floor while digging
+        if (this.y < FLOOR() - 8) this.y = Math.min(FLOOR() - 8, this.y + 22 * dt);
+        this.vx *= Math.pow(0.04, dt);
+        this.vy *= Math.pow(0.04, dt);
+        if (this.digging <= 0) {
+          if (Math.random() < 0.05) this.findTreasure();
+          this.digTimer = rand(22, 55);
+        }
+        return;
+      }
+      this.digTimer -= dt;
+      if (this.digTimer <= 0 && !this.visiting && this.hunger < 0.65 && this.grow >= 0.8) {
+        if (this.y > FLOOR() - 85) {
+          this.digging = rand(2.0, 3.5);
+          this.sandEmit = 0;
+          spawnEmoji(this.x, this.y - 18, 1, "⛏️");
+        } else {
+          this.digTimer = rand(4, 10); // too high — try again soon
+        }
       }
     }
 
@@ -763,6 +821,19 @@ class Fish {
     if (baby.gen > stats.generations) stats.generations = baby.gen;
     spawnHearts(bx, by, 8, 360);
     Sound.baby();
+  }
+
+  findTreasure() {
+    // award a ring to a random ringless arm (max one ring per arm)
+    const arms = this.genes.arms || 8;
+    const free = [];
+    for (let i = 0; i < arms; i++) { if (!this.rings.has(i)) free.push(i); }
+    if (free.length) this.rings.add(pick(free));
+    stats.treasures++;
+    coinBursts.push(new CoinBurst(this.x, this.y));
+    pirateGhosts.push(new PirateGhost(this.x, this.y));
+    Sound.treasure();
+    setTimeout(() => Sound.ghostWail(), 500);
   }
 
   // a soft halo for fish with the glow trait — subtle by day, luminous at night
@@ -995,6 +1066,23 @@ class Fish {
       ctx.beginPath();
       ctx.arc(baseX + sway, R * 0.5 + len, R * 0.07, 0, TAU);
       ctx.fill();
+
+      // gold ring on this arm, if one was earned (positioned ~40% along the tentacle)
+      if (this.rings.has(i)) {
+        const rx = baseX + sway * 0.43;
+        const ry = R * 0.5 + len * 0.43;
+        ctx.strokeStyle = "hsl(46,92%,62%)";
+        ctx.lineWidth = R * 0.11;
+        ctx.beginPath();
+        ctx.ellipse(rx, ry, R * 0.24, R * 0.13, 0, 0, TAU);
+        ctx.stroke();
+        // inner shine
+        ctx.strokeStyle = "hsl(52,100%,82%)";
+        ctx.lineWidth = R * 0.04;
+        ctx.beginPath();
+        ctx.arc(rx - R * 0.07, ry - R * 0.06, R * 0.09, -2.4, -0.7);
+        ctx.stroke();
+      }
     }
 
     // ---- head / mantle ----
@@ -1582,6 +1670,169 @@ class Chomp {
       ctx.arc(this.x + Math.cos(b.a) * d, this.y + Math.sin(b.a) * d, (1 - p) * 3, 0, TAU);
       ctx.fill();
     }
+    ctx.restore();
+  }
+}
+
+/* =========================================================================
+   OCTOPUS TREASURE EFFECTS — sand, coins, and a pirate ghost
+   ========================================================================= */
+class SandParticle {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.vx = rand(-36, 36);
+    this.vy = rand(-90, -40);   // fast upward — visibly flies into the water column
+    this.life = rand(0.8, 1.3);
+    this.maxLife = this.life;
+    this.r = rand(3, 6);
+    this.hue = rand(28, 45);
+  }
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vy += 38 * dt;         // gentle gravity — lets them travel 40-70px upward
+    this.life -= dt;
+    return this.life > 0;
+  }
+  draw() {
+    ctx.save();
+    ctx.globalAlpha = (this.life / this.maxLife) * 0.75;
+    ctx.fillStyle = hsl(this.hue, 65, 70);
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r * (this.life / this.maxLife * 0.5 + 0.5), 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class CoinBurst {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.t = 0; this.life = 1.5;
+    this.coins = Array.from({ length: 14 }, (_, i) => {
+      const a = (i / 14) * TAU + rand(-0.3, 0.3);
+      const sp = rand(38, 82);
+      return { vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 42,
+               x: 0, y: 0, spin: rand(0, TAU), hue: rand(42, 52) };
+    });
+  }
+  update(dt) {
+    this.t += dt;
+    for (const c of this.coins) {
+      c.x += c.vx * dt; c.y += c.vy * dt;
+      c.vy += 95 * dt;
+      c.spin += dt * 5;
+    }
+    return this.t < this.life;
+  }
+  draw() {
+    ctx.save();
+    ctx.globalAlpha = 1 - this.t / this.life;
+    for (const c of this.coins) {
+      ctx.save();
+      ctx.translate(this.x + c.x, this.y + c.y);
+      ctx.rotate(c.spin);
+      ctx.fillStyle = hsl(c.hue, 90, 62);
+      ctx.strokeStyle = hsl(c.hue - 8, 80, 42);
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.ellipse(0, 0, 6, 4, 0, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,200,0.55)";
+      ctx.beginPath(); ctx.ellipse(-1.5, -1, 2, 1.2, -0.5, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+}
+
+class PirateGhost {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.vy = 34;
+    this.wobble = rand(0, TAU);
+    this.t = 0;
+    this.life = Math.max(3.0, (y - H * 0.06) / 34 + 1.2);
+  }
+  update(dt) {
+    this.t += dt;
+    this.wobble += dt * 2.2;
+    this.y = Math.max(H * 0.06, this.y - this.vy * dt);
+    this.x += Math.sin(this.wobble) * 10 * dt;
+    return this.t < this.life;
+  }
+  draw() {
+    const p = this.t / this.life;
+    const alpha = p < 0.8 ? 0.78 : 0.78 * (1 - (p - 0.8) / 0.2);
+    if (alpha <= 0.01) return;
+    const s = 22;
+    const wob = Math.sin(this.wobble) * 3;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(this.x, this.y);
+
+    // ghost body — domed top, four-ripple wavy hem
+    ctx.fillStyle = "rgba(215,225,255,0.88)";
+    ctx.beginPath();
+    ctx.arc(0, -s * 0.55, s, Math.PI, 0);
+    ctx.quadraticCurveTo( s * 1.04, -s * 0.05,        s * 0.82, s * 0.12);
+    ctx.quadraticCurveTo( s * 0.62,  s * 0.52 + wob,  s * 0.42, s * 0.18);
+    ctx.quadraticCurveTo( s * 0.2,   s * 0.52 - wob * 0.9,  0,  s * 0.18);
+    ctx.quadraticCurveTo(-s * 0.2,   s * 0.52 + wob * 0.8, -s * 0.42, s * 0.18);
+    ctx.quadraticCurveTo(-s * 0.62,  s * 0.52 - wob,       -s * 0.82, s * 0.12);
+    ctx.quadraticCurveTo(-s * 1.04, -s * 0.05, -s, -s * 0.55);
+    ctx.closePath();
+    ctx.fill();
+
+    // bicorn hat — wide arch, highest at centre, tips sweep out low to the sides
+    ctx.fillStyle = "#1c1c2e";
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.9, -s * 1.38);
+    ctx.bezierCurveTo(-s * 1.15, -s * 1.38, -s * 1.2, -s * 1.52, -s * 1.1, -s * 1.72);
+    ctx.bezierCurveTo(-s * 0.85, -s * 2.02, -s * 0.35, -s * 2.12, 0, -s * 2.12);
+    ctx.bezierCurveTo( s * 0.35, -s * 2.12,  s * 0.85, -s * 2.02,  s * 1.1, -s * 1.72);
+    ctx.bezierCurveTo( s * 1.2, -s * 1.52,   s * 1.15, -s * 1.38,  s * 0.9, -s * 1.38);
+    ctx.closePath(); ctx.fill();
+    // white trim along the rim
+    ctx.strokeStyle = "rgba(255,255,255,0.38)";
+    ctx.lineWidth = s * 0.09; ctx.lineCap = "round";
+    ctx.stroke();
+    // skull & crossbones on hat — large enough to read clearly
+    ctx.fillStyle = "rgba(240,240,240,0.88)";
+    ctx.beginPath(); ctx.arc(0, -s * 1.77, s * 0.2, 0, TAU); ctx.fill();  // skull dome
+    // tiny eye sockets on skull
+    ctx.fillStyle = "#1c1c2e";
+    ctx.beginPath(); ctx.arc(-s * 0.08, -s * 1.78, s * 0.065, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(s * 0.08, -s * 1.78, s * 0.065, 0, TAU); ctx.fill();
+    // crossbones — two diagonal lines with knobby ends
+    ctx.strokeStyle = "rgba(240,240,240,0.88)";
+    ctx.lineWidth = s * 0.1; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(-s * 0.28, -s * 1.58); ctx.lineTo(s * 0.28, -s * 1.98); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(s * 0.28, -s * 1.58); ctx.lineTo(-s * 0.28, -s * 1.98); ctx.stroke();
+
+    // hollow dark eyes
+    ctx.fillStyle = "rgba(20,20,50,0.72)";
+    ctx.beginPath(); ctx.ellipse(-s * 0.3, -s * 0.62, s * 0.17, s * 0.14, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(s * 0.3, -s * 0.62, s * 0.17, s * 0.14, 0, 0, TAU); ctx.fill();
+    // eyepatch over right eye (left from viewer)
+    ctx.fillStyle = "#1c1c2e";
+    ctx.beginPath(); ctx.ellipse(s * 0.3, -s * 0.62, s * 0.2, s * 0.17, 0, 0, TAU); ctx.fill();
+    // eyepatch strap — diagonal from upper-left forehead to lower-right cheek,
+    // endpoints sit on the ghost body edge so the strap is fully visible
+    ctx.strokeStyle = "rgba(80,55,115,0.82)";
+    ctx.lineWidth = s * 0.055; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.70, -s * 1.27);
+    ctx.lineTo( s * 0.95, -s * 0.2);
+    ctx.stroke();
+
+    // wiggly mouth
+    ctx.strokeStyle = "rgba(20,20,50,0.6)";
+    ctx.lineWidth = s * 0.07; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.28, -s * 0.28);
+    ctx.quadraticCurveTo(-s * 0.1, -s * 0.15 + wob * 0.4, 0, -s * 0.28);
+    ctx.quadraticCurveTo(s * 0.1, -s * 0.15 - wob * 0.4, s * 0.28, -s * 0.28);
+    ctx.stroke();
+
     ctx.restore();
   }
 }
@@ -2501,6 +2752,9 @@ function frame(now) {
   for (let i = hearts.length - 1; i >= 0; i--) if (!hearts[i].update(dt)) hearts.splice(i, 1);
   for (let i = chomps.length - 1; i >= 0; i--) if (!chomps[i].update(dt)) chomps.splice(i, 1);
   for (let i = visitors.length - 1; i >= 0; i--) if (!visitors[i].update(dt)) visitors.splice(i, 1);
+  for (let i = sandParticles.length - 1; i >= 0; i--) if (!sandParticles[i].update(dt)) sandParticles.splice(i, 1);
+  for (let i = coinBursts.length - 1; i >= 0; i--) if (!coinBursts[i].update(dt)) coinBursts.splice(i, 1);
+  for (let i = pirateGhosts.length - 1; i >= 0; i--) if (!pirateGhosts[i].update(dt)) pirateGhosts.splice(i, 1);
 
   surpriseTimer -= dt;
   if (surpriseTimer <= 0) { surpriseTimer = rand(25, 55); triggerSurprise(); }
@@ -2526,6 +2780,7 @@ function frame(now) {
   visitors.forEach(v => v.draw());           // whales/jellies drift behind plants
   bubbles.forEach(b => b.draw());
   foods.forEach(f => f.draw());
+  sandParticles.forEach(p => p.draw());
   seahorses.forEach(s => s.draw());
   if (turtle) turtle.draw();                  // the turtle drifts among the fish
   fishes.forEach(f => f.draw());
@@ -2540,6 +2795,8 @@ function frame(now) {
   drawHoverHighlights();
   hearts.forEach(h => h.draw());
   chomps.forEach(c => c.draw());             // bite-bursts pop on top of everything
+  coinBursts.forEach(c => c.draw());         // gold coin showers from buried treasure
+  pirateGhosts.forEach(g => g.draw());       // pirate ghosts float to the surface
 
   document.getElementById("count").textContent =
     `🐟 ${fishes.length}   🦀 ${crabs.length}   🐴 ${seahorses.length}   🐢 ${turtle ? 1 : 0}`;
@@ -2628,6 +2885,7 @@ const STAT_GROUPS = [
   ] },
   { tab: "🌊", title: "Tank", rows: [
     { label: "🏰 Castle visits", get: () => stats.castleVisits },
+    { label: "💰 Treasures found", get: () => stats.treasures },
     { label: "🫧 Bubbles popped", get: () => stats.bubblesPopped },
     { label: "🌱 Total seaweed length", get: () => (totalSeaweed() / PX_PER_FT).toFixed(1) + " ft" },
     { label: "🌗 Days passed", get: () => Math.floor(tankClock / DAY_PERIOD) },
