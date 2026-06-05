@@ -22,7 +22,7 @@
   /* On-screen toy buttons, big and chunky for little fingers */
   #toolbar {
     position: fixed;
-    left: 0; right: 0; bottom: 0;
+    left: 0; right: 0; top: 0;
     display: flex;
     justify-content: center;
     gap: 10px;
@@ -49,7 +49,7 @@
 
   #count {
     position: fixed;
-    top: 10px; left: 14px;
+    bottom: 10px; left: 14px;
     color: rgba(255,255,255,0.55);
     font-size: 18px;
     pointer-events: none;
@@ -127,6 +127,13 @@
     <button class="close" id="logClose" title="Close">✕</button>
     <h2>🐠 What's New</h2>
     <p class="sub">A little aquarium that keeps growing.</p>
+
+    <h3>🦀 Crab rave <span class="date">· Jun 5, 2026</span></h3>
+    <ul>
+      <li>Poke a crab <b>6 times in a row</b> to throw a <b>crab rave</b> — disco lights, a thumping beat, and crabs dancing in unison.</li>
+      <li>You can now keep up to <b>100 crabs</b> in the tank.</li>
+      <li>The menu bar moved to the <b>top</b> so it stays out of the crabs' way.</li>
+    </ul>
 
     <h3>Friends, family &amp; rivalries <span class="date">· Jun 5, 2026</span></h3>
     <ul>
@@ -270,6 +277,10 @@ const Sound = (() => {
       [392, 523, 659, 784, 1047].forEach((f, i) =>
         setTimeout(() => tone(f, 0.18, "square", 0.08), i * 70));
     },
+    // crab rave: a thumping kick, a ticking hi-hat, and a synth bassline
+    raveKick() { tone(110, 0.16, "sine", 0.24, 38); },
+    raveHat() { tone(7200, 0.025, "square", 0.03); },
+    raveNote(f) { if (f) tone(f, 0.14, "sawtooth", 0.06); },
     // ambient bubbling, called every frame
     tick(dt) {
       if (!on) return;
@@ -969,7 +980,8 @@ class Crab {
     this.speed = rand(18, 30);
   }
   update(dt) {
-    this.legPhase += dt * 10;
+    this.legPhase += dt * (raveActive ? 32 : 10);
+    if (raveActive) return;   // during the rave the crabs dance in place
     if (this.pauseTimer > 0) { this.pauseTimer -= dt; return; }
     this.x += this.dir * this.speed * dt;
     if (Math.random() < 0.004) this.pauseTimer = rand(0.5, 2);
@@ -978,12 +990,21 @@ class Crab {
     if (this.x > W - 30) this.dir = -1;
   }
   draw() {
-    const y = FLOOR() - 6;
     const s = 16 * this.size;
+    // when the party's on, crabs hop on the beat, wiggle, and turn rainbow
+    let yOff = 0, tilt = 0, hue = this.hue;
+    if (raveActive) {
+      const ph = raveT * Math.PI / (RAVE_8TH * 2) + this.x * 0.03; // one hop per kick
+      yOff = -Math.abs(Math.sin(ph)) * s * 1.1;
+      tilt = Math.sin(ph * 2) * 0.2;
+      hue = (raveT * 200 + this.x) % 360;
+    }
+    const y = FLOOR() - 6;
     ctx.save();
-    ctx.translate(this.x, y);
+    ctx.translate(this.x, y + yOff);
+    ctx.rotate(tilt);
     const legY = Math.sin(this.legPhase) * 2;
-    ctx.strokeStyle = hsl(this.hue, 70, 35);
+    ctx.strokeStyle = hsl(hue, 70, 35);
     ctx.lineWidth = 2.2;
     for (let i = -1; i <= 1; i++) {
       ctx.beginPath();
@@ -996,19 +1017,19 @@ class Crab {
       ctx.stroke();
     }
     // claws
-    ctx.fillStyle = hsl(this.hue, 75, 45);
+    ctx.fillStyle = hsl(hue, 75, 45);
     ctx.beginPath(); ctx.arc(-s * 0.8, -s * 0.1, s * 0.32, 0, TAU); ctx.fill();
     ctx.beginPath(); ctx.arc(s * 0.8, -s * 0.1, s * 0.32, 0, TAU); ctx.fill();
     // body
     const grad = ctx.createLinearGradient(0, -s * 0.5, 0, s * 0.5);
-    grad.addColorStop(0, hsl(this.hue, 75, 55));
-    grad.addColorStop(1, hsl(this.hue, 75, 40));
+    grad.addColorStop(0, hsl(hue, 75, 55));
+    grad.addColorStop(1, hsl(hue, 75, 40));
     ctx.fillStyle = grad;
     ctx.beginPath();
     ctx.ellipse(0, 0, s, s * 0.7, 0, 0, TAU);
     ctx.fill();
     // eyes on stalks
-    ctx.strokeStyle = hsl(this.hue, 70, 35); ctx.lineWidth = 2;
+    ctx.strokeStyle = hsl(hue, 70, 35); ctx.lineWidth = 2;
     for (const ex of [-s * 0.3, s * 0.3]) {
       ctx.beginPath(); ctx.moveTo(ex, -s * 0.5); ctx.lineTo(ex, -s * 0.9); ctx.stroke();
       ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ex, -s * 0.95, s * 0.16, 0, TAU); ctx.fill();
@@ -1663,7 +1684,7 @@ function addFish() {
     Sound.plop();
   }
 }
-function addCrab() { if (crabs.length < 8) { crabs.push(new Crab(rand(60, W - 60))); Sound.plop(); } }
+function addCrab() { if (crabs.length < 100) { crabs.push(new Crab(rand(60, W - 60))); Sound.plop(); } }
 function addSeahorse() { if (seahorses.length < 8) { seahorses.push(new Seahorse(rand(60, W - 60))); Sound.plop(); } }
 function addPlant() {
   if (decorations.filter(d => d instanceof Plant).length >= 16) return;
@@ -1825,6 +1846,111 @@ function drawHoverHighlights() {
 /* =========================================================================
    MAIN LOOP
    ========================================================================= */
+/* =========================================================================
+   CRAB RAVE — poke the crabs enough times in a row and the tank throws a
+   party: disco lights, a thumping beat, and crabs dancing in unison. 🦀
+   ========================================================================= */
+let crabCombo = 0;                 // consecutive crab pokes
+let crabComboTimer = 0;            // time left to keep the combo alive
+const CRAB_COMBO_WINDOW = 1.2;     // seconds between pokes before it resets
+const CRAB_RAVE_THRESHOLD = 6;     // pokes in a row to kick off the party
+
+let raveActive = false;
+let rave = 0;                      // seconds of party remaining
+let raveT = 0;                     // elapsed party time, drives the beat
+let raveStep = -1;                 // last 1/8-note step we played
+const RAVE_LEN = 16;               // how long a party lasts (s)
+const RAVE_BPM = 125;
+const RAVE_8TH = 60 / RAVE_BPM / 2;   // seconds per eighth note
+// a bouncy 16-step bassline (Hz; 0 = rest), roughly A-minor
+const RAVE_RIFF = [
+  440, 0, 523, 0, 659, 0, 523, 440,
+  392, 0, 523, 0, 587, 0, 494, 0,
+];
+
+function crabAt(x, y) {
+  const cy = FLOOR() - 6;
+  for (const c of crabs) {
+    const s = 16 * c.size;
+    if (Math.abs(x - c.x) < s * 1.3 && y > cy - s * 2.2 && y < cy + s) return c;
+  }
+  return null;
+}
+
+function pokeCrab(c) {
+  crabCombo++;
+  crabComboTimer = CRAB_COMBO_WINDOW;
+  c.pauseTimer = 0;
+  Sound.plop();
+  spawnEmoji(c.x, FLOOR() - 28, 1, "🦀");
+  if (crabCombo >= CRAB_RAVE_THRESHOLD) startRave();
+}
+
+function startRave() {
+  rave = RAVE_LEN;                 // (re)start or extend the party
+  if (!raveActive) { raveActive = true; raveT = 0; raveStep = -1; }
+  crabCombo = 0;
+  spawnEmoji(W / 2, H * 0.4, 8, "🦀");
+}
+
+function updateRave(dt) {
+  // tick the combo window down between pokes
+  if (crabComboTimer > 0) { crabComboTimer -= dt; if (crabComboTimer <= 0) crabCombo = 0; }
+
+  if (!raveActive) return;
+  rave -= dt;
+  if (rave <= 0) { raveActive = false; return; }
+  raveT += dt;
+
+  // step the beat forward, firing drums + bass as we cross each 1/8 note
+  const step = Math.floor(raveT / RAVE_8TH);
+  if (step !== raveStep) {
+    raveStep = step;
+    const i = step % RAVE_RIFF.length;
+    if (i % 2 === 0) Sound.raveKick();   // four-on-the-floor kick
+    Sound.raveHat();
+    Sound.raveNote(RAVE_RIFF[i]);
+  }
+}
+
+function drawRave() {
+  if (!raveActive) return;
+  const thump = 1 - (raveT % (RAVE_8TH * 2)) / (RAVE_8TH * 2);  // 1 on the beat → 0
+  const fadeIn = clamp((RAVE_LEN - rave) / 0.4, 0, 1);
+  const fadeOut = clamp(rave / 1.2, 0, 1);
+  const fade = fadeIn * fadeOut;
+
+  ctx.save();
+  // sweeping coloured light beams from the top
+  ctx.globalCompositeOperation = "lighter";
+  const beams = 5;
+  for (let i = 0; i < beams; i++) {
+    const hue = (raveT * 90 + i * 360 / beams) % 360;
+    const x = W / 2 + Math.sin(raveT * 1.6 + i) * W * 0.28;
+    ctx.fillStyle = hsl(hue, 90, 55, (0.05 + 0.05 * thump) * fade);
+    ctx.beginPath();
+    ctx.moveTo(W / 2, -20);
+    ctx.lineTo(x - 70, H);
+    ctx.lineTo(x + 70, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // a colour wash that pulses with the kick
+  ctx.fillStyle = hsl((raveT * 120) % 360, 80, 50, (0.05 + 0.10 * thump) * fade);
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  // a bouncing party banner
+  ctx.save();
+  ctx.globalAlpha = fade;
+  ctx.textAlign = "center";
+  ctx.font = `bold ${44 + thump * 12}px -apple-system, "Segoe UI", sans-serif`;
+  ctx.fillStyle = hsl((raveT * 200) % 360, 90, 65);
+  ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 8;
+  ctx.fillText("🦀 CRAB RAVE 🦀", W / 2, H * 0.22 + Math.sin(raveT * 6) * 6);
+  ctx.restore();
+}
+
 let last = 0;
 let bubbleSpawn = 0;
 let autoFeedTimer = rand(6, 12);
@@ -1853,6 +1979,7 @@ function frame(now) {
   if (surpriseTimer <= 0) { surpriseTimer = rand(25, 55); triggerSurprise(); }
 
   updateLure(dt);
+  updateRave(dt);
 
   // passive feeding: every so often a little food drifts down on its own,
   // so the fish keep foraging even when nobody is watching.
@@ -1877,7 +2004,9 @@ function frame(now) {
   crabs.forEach(c => c.draw());
   drawDecorFront();
   drawNightVeil();                            // dim the whole scene after dark
-  canvas.style.cursor = fishUnderPointer() ? "pointer" : "default";
+  drawRave();                                 // disco lights override the dark 🦀
+  canvas.style.cursor =
+    (fishUnderPointer() || (pointer.active && crabAt(pointer.x, pointer.y))) ? "pointer" : "default";
   drawHoverHighlights();
   hearts.forEach(h => h.draw());
 
@@ -1900,9 +2029,13 @@ canvas.addEventListener("pointerdown", (e) => {
   if (f) {
     // tapping a fish toggles info mode on it — no food dropped
     selected = (selected === f) ? null : f;
+    crabCombo = 0;   // poking a fish breaks the crab combo
     return;
   }
+  const c = crabAt(x, y);
+  if (c) { pokeCrab(c); return; }   // poke a crab — enough in a row starts a rave 🦀
   selected = null;   // tapping the water turns info mode off...
+  crabCombo = 0;
   feedAt(x, y);      // ...and drops food where you tapped
 });
 
