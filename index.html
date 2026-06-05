@@ -1262,7 +1262,11 @@ class Crab {
     f.eat();
     stats.crabFood++;
     this.foodEaten++;
-    if (this.foodEaten >= CRAB_BIRTH_FOOD) { this.foodEaten = 0; this.layEgg(); }
+    // only fully-grown crabs lay eggs — babies can eat their fill but won't
+    // breed until they've reached adult size
+    if (this.foodEaten >= CRAB_BIRTH_FOOD && this.growT >= CRAB_GROW_TIME) {
+      this.foodEaten = 0; this.layEgg();
+    }
   }
   layEgg() {
     if (crabs.length + eggs.length >= 100) return;   // don't overfill the tank
@@ -1469,11 +1473,15 @@ class Seahorse {
     ctx.save();
     ctx.translate(this.x, this.y);
     if (partying) {
+      // spin freely as a glowstick — skip the dir-based horizontal flip, which
+      // would otherwise mirror the body (and visually reverse the spin) every
+      // time the seahorse happens to change swim direction mid-twirl
       ctx.rotate(this.spin);
       ctx.shadowColor = hsl(hue, 90, 60);
       ctx.shadowBlur = s * 0.9;
+    } else {
+      ctx.scale(this.dir, 1);
     }
-    ctx.scale(this.dir, 1);
     ctx.fillStyle = hsl(hue, partying ? 95 : 70, partying ? 65 : 60);
     ctx.strokeStyle = hsl(hue, partying ? 95 : 70, partying ? 55 : 45);
     ctx.lineWidth = s * 0.5;
@@ -1577,7 +1585,9 @@ class Turtle {
         this.mood = "wander"; this.moodTimer = rand(8, 14);
       }
     } else if (this.mood === "ascend") {
-      ay += (H * 0.18 - this.y) * 0.03;          // climb high so riders can chute
+      // climb right up to the crab launch level (the height crabs base-jump
+      // from, H*0.2) and a touch above, so riders reliably clear the bar
+      ay += (H * 0.16 - this.y) * 0.06;
     }
 
     // drift toward friends; stalk the nearest enemy so collisions actually happen
@@ -1598,7 +1608,9 @@ class Turtle {
     const m = 70;
     if (this.x < m) ax += (m - this.x) * 0.02;
     if (this.x > W - m) ax -= (this.x - (W - m)) * 0.02;
-    if (this.y < H * 0.2) ay += (H * 0.2 - this.y) * 0.02;
+    // gently pushed back down near the surface — but not while ascending to
+    // launch crabs, or it'd never reach the launch level
+    if (this.y < H * 0.2 && this.mood !== "ascend") ay += (H * 0.2 - this.y) * 0.02;
     if (this.y > FLOOR() - 18) ay -= (this.y - (FLOOR() - 18)) * 0.05;
 
     this.vx += ax * dt; this.vy += ay * dt;
@@ -1636,9 +1648,12 @@ class Turtle {
   // pick the next stage of the slow ferry cycle
   nextMood() {
     if (this.mood === "wander") {
-      const c = this.nearestSandCrab();
+      // only sometimes get the urge to fetch a crab — there's almost always one
+      // on the sand, so without this gate the turtle ferries non-stop. ~35% of
+      // the time it picks a crab; otherwise it just keeps lazily wandering.
+      const c = Math.random() < 0.35 ? this.nearestSandCrab() : null;
       if (c) { this.mood = "fetch"; this.targetCrab = c; this.moodTimer = rand(10, 16); }
-      else { this.moodTimer = rand(6, 12); }     // nobody to fetch — keep wandering
+      else { this.moodTimer = rand(8, 16); }     // not this time — keep wandering
     } else if (this.mood === "fetch") {
       this.mood = "cruise"; this.targetCrab = null; this.moodTimer = rand(8, 16);
     } else if (this.mood === "cruise") {
