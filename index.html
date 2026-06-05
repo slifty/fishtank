@@ -1647,18 +1647,26 @@ class Turtle {
 
   // pick the next stage of the slow ferry cycle
   nextMood() {
+    // a loose crab on the sand we could go pick up (null if there are none)
+    const loose = this.nearestSandCrab();
     if (this.mood === "wander") {
       // only sometimes get the urge to fetch a crab — there's almost always one
       // on the sand, so without this gate the turtle ferries non-stop. ~35% of
-      // the time it picks a crab; otherwise it just keeps lazily wandering.
-      const c = Math.random() < 0.35 ? this.nearestSandCrab() : null;
+      // the time it picks a crab; otherwise it keeps lazily wandering.
+      const c = Math.random() < 0.35 ? loose : null;
       if (c) { this.mood = "fetch"; this.targetCrab = c; this.moodTimer = rand(10, 16); }
+      // carrying passengers with nobody left to collect? rise up for the big
+      // group jump. This is also what un-strands a lone rider: a crab climbs on
+      // by itself while we're low, and with no loose crab to fetch the cycle
+      // used to stay in "wander" forever, leaving it stuck on the shell.
+      else if (this.riders > 0 && !loose) { this.mood = "ascend"; this.moodTimer = rand(8, 14); }
       else { this.moodTimer = rand(8, 16); }     // not this time — keep wandering
     } else if (this.mood === "fetch") {
       this.mood = "cruise"; this.targetCrab = null; this.moodTimer = rand(8, 16);
     } else if (this.mood === "cruise") {
-      // carrying anyone? rise up so they can parachute; otherwise wander
-      this.mood = this.riders > 0 ? "ascend" : "wander";
+      // keep collecting while crabs remain on the sand, so a whole crew can pile
+      // on; only surface for the parachute party once there's nobody left to fetch
+      this.mood = (this.riders > 0 && !loose) ? "ascend" : "wander";
       this.moodTimer = rand(8, 14);
     } else {                                       // ascend → back to wandering
       this.mood = "wander"; this.moodTimer = rand(10, 18);
