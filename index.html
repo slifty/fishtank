@@ -160,6 +160,7 @@
       <li>Octopuses now occasionally <b>dig in the sand</b> — watch for the flying sand and the ⛏️.</li>
       <li>Rarely, they unearth <b>buried treasure</b>: a burst of gold coins shoots out, and a cute <b>pirate ghost</b> 👻 floats up from the dig spot to the surface, then fades away.</li>
       <li>An octopus that found treasure gets a <b>gold ring</b> on one of its arms — up to one ring per arm, eight arms total. 💍</li>
+      <li>📊 The stats now tally <b>holes dug</b>, <b>treasures found</b>, <b>gold coins unearthed</b>, and <b>gold rings earned</b>.</li>
     </ul>
 
     <h3>📊 Tank Stats <span class="date">· Jun 5, 2026</span></h3>
@@ -472,7 +473,7 @@ const stats = {
   friendships: 0, rivalries: 0, castleVisits: 0, bubblesPopped: 0,
   raves: 0, chutes: 0, crabFeet: 0, rides: 0,
   whales: 0, jellies: 0, penguins: 0,
-  treasures: 0,
+  treasures: 0, digs: 0, coins: 0, rings: 0,
 };
 
 const FLOOR = () => H - 46;   // sandy bottom line
@@ -608,6 +609,7 @@ class Fish {
         this.vx *= Math.pow(0.04, dt);
         this.vy *= Math.pow(0.04, dt);
         if (this.digging <= 0) {
+          stats.digs++;   // a hole dug — most turn up nothing
           if (Math.random() < 0.05) this.findTreasure();
           this.digTimer = rand(22, 55);
         }
@@ -828,9 +830,11 @@ class Fish {
     const arms = this.genes.arms || 8;
     const free = [];
     for (let i = 0; i < arms; i++) { if (!this.rings.has(i)) free.push(i); }
-    if (free.length) this.rings.add(pick(free));
+    if (free.length) { this.rings.add(pick(free)); stats.rings++; }   // octopus bling
     stats.treasures++;
-    coinBursts.push(new CoinBurst(this.x, this.y));
+    const burst = new CoinBurst(this.x, this.y);
+    coinBursts.push(burst);
+    stats.coins += burst.coins.length;   // gold spilled from the hoard
     pirateGhosts.push(new PirateGhost(this.x, this.y));
     Sound.treasure();
     setTimeout(() => Sound.ghostWail(), 500);
@@ -2885,7 +2889,10 @@ const STAT_GROUPS = [
   ] },
   { tab: "🌊", title: "Tank", rows: [
     { label: "🏰 Castle visits", get: () => stats.castleVisits },
+    { label: "⛏️ Holes dug", get: () => stats.digs },
     { label: "💰 Treasures found", get: () => stats.treasures },
+    { label: "🪙 Gold coins unearthed", get: () => stats.coins },
+    { label: "💍 Gold rings earned", get: () => stats.rings },
     { label: "🫧 Bubbles popped", get: () => stats.bubblesPopped },
     { label: "🌱 Total seaweed length", get: () => (totalSeaweed() / PX_PER_FT).toFixed(1) + " ft" },
     { label: "🌗 Days passed", get: () => Math.floor(tankClock / DAY_PERIOD) },
