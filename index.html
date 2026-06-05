@@ -81,7 +81,10 @@
     backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
     transition: opacity 0.25s ease;
   }
-  #changelog.hidden { opacity: 0; pointer-events: none; }
+  /* Kill pointer events on the card too — otherwise the invisible, faded-out
+     card keeps eating clicks in the centre of the tank (its explicit
+     pointer-events:auto isn't overridden by the backdrop's :none). */
+  #changelog.hidden, #changelog.hidden .card { pointer-events: none; opacity: 0; }
   #changelog .card {
     pointer-events: auto;
     width: min(560px, 88vw); max-height: 78vh; overflow-y: auto;
