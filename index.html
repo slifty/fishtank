@@ -155,6 +155,11 @@
     <h2>🐠 What's New</h2>
     <p class="sub">A little aquarium that keeps growing.</p>
 
+    <h3>🍅 Rolling baby crabs <span class="date">· Jun 8, 2026</span></h3>
+    <ul>
+      <li>🍅 Baby crabs (freshly hatched, still growing) now appear as <b>rolling tomatoes</b> — they spin along the sand as they scuttle and forage, and gradually reveal their true crab form over the minute it takes to grow up.</li>
+    </ul>
+
     <h3>🐙 Buried treasure <span class="date">· Jun 5, 2026</span></h3>
     <ul>
       <li>Octopuses now occasionally <b>dig in the sand</b> — watch for the flying sand and the ⛏️.</li>
@@ -1190,6 +1195,7 @@ class Crab {
     this.vx = 0;              // sideways drift while floating
     this.swayT = 0;           // parachute sway phase
     this.coolT = 0;           // seconds it keeps its shades on after a jump
+    this.rollAngle = 0;       // cumulative rotation angle for baby-tomato rolling
     this.foodEaten = 0;       // fallen food eaten — enough births a new crab
   }
   update(dt) {
@@ -1228,6 +1234,7 @@ class Crab {
       this.pauseTimer = 0;
       this.dir = meal.x >= this.x ? 1 : -1;
       this.x += this.dir * this.speed * dt;
+      this.rollAngle += this.dir * this.speed * dt / 8;
       stats.crabFeet += this.speed * dt;
       if (Math.abs(meal.x - this.x) < 12) this.eatFood(meal);
       this.x = clamp(this.x, 30, W - 30);
@@ -1235,6 +1242,7 @@ class Crab {
     }
     if (this.pauseTimer > 0) { this.pauseTimer -= dt; return; }
     this.x += this.dir * this.speed * dt;
+    this.rollAngle += this.dir * this.speed * dt / 8;
     stats.crabFeet += this.speed * dt;   // tallying the great crab march
     if (Math.random() < 0.004) this.pauseTimer = rand(0.5, 2);
     if (Math.random() < 0.003) this.dir *= -1;
@@ -1302,6 +1310,33 @@ class Crab {
       hue = (raveT * 200 + this.x) % 360;
     }
     const y = this.y;
+    // baby crabs (still growing) look like rolling tomatoes
+    if (this.growT < CRAB_GROW_TIME) {
+      const r = s * 0.7;
+      const bodyC1 = raveActive ? hsl(hue, 90, 60) : hsl(5, 90, 62);
+      const bodyC2 = raveActive ? hsl(hue, 80, 38) : hsl(0, 80, 38);
+      const leafC  = raveActive ? hsl((hue + 120) % 360, 65, 35) : hsl(115, 65, 32);
+      const stemC  = raveActive ? hsl((hue + 120) % 360, 55, 28) : hsl(115, 55, 28);
+      ctx.save();
+      ctx.translate(this.x, y + yOff);
+      ctx.rotate(this.rollAngle + tilt);
+      const grad = ctx.createRadialGradient(-r * 0.25, -r * 0.25, r * 0.05, 0, 0, r);
+      grad.addColorStop(0, bodyC1);
+      grad.addColorStop(1, bodyC2);
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+      ctx.fillStyle = leafC;
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * TAU - Math.PI / 2;
+        ctx.beginPath();
+        ctx.ellipse(Math.cos(a) * r * 0.4, -r * 0.88 + Math.sin(a) * r * 0.18, r * 0.25, r * 0.1, a, 0, TAU);
+        ctx.fill();
+      }
+      ctx.strokeStyle = stemC; ctx.lineWidth = Math.max(1.5, s * 0.08);
+      ctx.beginPath(); ctx.moveTo(0, -r * 0.9); ctx.lineTo(s * 0.08, -r - s * 0.2); ctx.stroke();
+      ctx.restore();
+      return;
+    }
     ctx.save();
     ctx.translate(this.x, y + yOff);
     ctx.rotate(tilt);
